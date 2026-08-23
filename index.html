@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>رؤوف × سارة — قصتنا</title>
+<meta name="description" content="قصة صغيرة بدات بطريقة عادية">
+<meta name="theme-color" content="#0D0C0B">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body class="is-locked">
+
+<!-- ============ GRAIN + VIGNETTE OVERLAY ============ -->
+<div class="grain" aria-hidden="true"></div>
+<div class="vignette" aria-hidden="true"></div>
+
+<!-- ============ INTRO ============ -->
+<section class="intro" id="intro" aria-label="مقدمة">
+  <div class="intro__inner">
+    <div class="intro__stage" id="introStage">
+      <span class="intro__mark" data-step="0">R</span>
+    </div>
+    <p class="intro__line" id="introLine"></p>
+  </div>
+  <button class="intro__enter" id="enterBtn" type="button">
+    <span class="intro__enter-label">ادخل قصتنا</span>
+    <span class="intro__enter-rule" aria-hidden="true"></span>
+  </button>
+  <button class="intro__skip" id="skipBtn" type="button">تخطي</button>
+</section>
+
+<!-- ============ FIXED UI ============ -->
+<div class="ui" id="ui" aria-hidden="true">
+  <div class="ui__progress"><span class="ui__progress-bar" id="progressBar"></span></div>
+  <div class="ui__chapter" id="uiChapter">
+    <span class="ui__chapter-num" id="uiChapterNum">01</span>
+    <span class="ui__chapter-name" id="uiChapterName">دخلتي القروب</span>
+  </div>
+  <div class="player-wrap">
+    <button class="player" id="playerBtn" type="button" aria-label="شغل اغنيتنا">
+      <span class="player__eq" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span class="player__label">شغل اغنيتنا</span>
+    </button>
+    <button class="player__next" id="playerNext" type="button" aria-label="الاغنية التالية" hidden>&rsaquo;</button>
+  </div>
+  <audio id="audio" preload="none"></audio>
+</div>
+
+<main id="main">
+
+  <!-- ============ HERO ============ -->
+  <header class="hero" id="hero" data-chapter="&mdash;" data-chapter-name="قصتنا">
+    <div class="hero__bg" data-parallax="0.12">
+      <img src="assets/generated/backgrounds/hero.webp" alt="" loading="eager" decoding="async">
+    </div>
+
+    <div class="hero__grid">
+      <div class="hero__meta">
+        <span class="mono">R &nbsp;&mdash;&nbsp; S</span>
+        <span class="mono dim">no. 001</span>
+      </div>
+
+      <figure class="hero__portrait hero__portrait--sara" data-slot="sara-01" data-tilt="-1.4">
+        <div class="ph" data-ph-label="صورة سارة">
+          <img data-src="assets/images/memories/sara-01.jpg" alt="سارة" loading="lazy" decoding="async">
+        </div>
+        <figcaption class="cap"><span class="hand">هي</span><span class="mono">سارة</span></figcaption>
+      </figure>
+
+      <div class="hero__title">
+        <h1>
+          <span class="hero__name hero__name--a">رؤوف</span>
+          <span class="hero__x" aria-hidden="true">×</span>
+          <span class="hero__name hero__name--b">سارة</span>
+        </h1>
+        <p class="hero__sub">قصة بدات بطريقة عادية</p>
+      </div>
+
+      <figure class="hero__portrait hero__portrait--raouf" data-slot="raouf-01" data-tilt="2.1">
+        <div class="ph" data-ph-label="صورة رؤوف">
+          <img data-src="assets/images/memories/raouf-01.jpg" alt="رؤوف" loading="lazy" decoding="async">
+        </div>
+        <figcaption class="cap"><span class="hand">هو</span><span class="mono">رؤوف</span></figcaption>
+      </figure>
+
+      <div class="hero__date">
+        <span class="date-big">19.08.2026</span>
+        <span class="mono dim">اليوم اللي قلت لك فيه</span>
+      </div>
+
+      <div class="hero__scroll" aria-hidden="true">
+        <span class="mono">انزل</span>
+        <span class="hero__scroll-line"></span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ============ CHAPTER 01 — big image, small text ============ -->
+  <section class="ch ch01" id="ch01" data-chapter="01" data-chapter-name="دخلتي القروب">
+    <div class="ch01__label">
+      <span class="mono">CHAPTER 01</span>
+      <span class="rule" aria-hidden="true"></span>
+    </div>
+
+    <figure class="ch01__image reveal" data-reveal>
+      <img src="assets/generated/backgrounds/beginning.webp" alt="" loading="lazy" decoding="async">
+      <figcaption class="mono dim">قروب على انستغرام</figcaption>
+    </figure>
+
+    <div class="ch01__text">
+      <h2 class="display" data-reveal>دخلتي القروب</h2>
+      <p class="lede" data-reveal>ما كنت اعرف وقتها ان دخولك لهذا القروب بيغير اشياء كثيرة عندي</p>
+      <p class="note hand" data-reveal>كان يوم عادي جدا</p>
+    </div>
+  </section>
+
+  <!-- ============ CHAPTER 02 — small image in emptiness ============ -->
+  <section class="ch ch02" id="ch02" data-chapter="02" data-chapter-name="لاحظتك">
+    <span class="mono ch02__num">CHAPTER 02</span>
+
+    <div class="ch02__stack">
+      <p class="ch02__line ch02__line--1" data-reveal>في البداية كنتي شخص جديد في القروب</p>
+
+      <figure class="ch02__image" data-reveal data-tilt="1.6">
+        <div class="ph ph--sm" data-ph-label="صورة صغيرة">
+          <img data-src="assets/images/memories/memory-01.jpg" alt="" loading="lazy" decoding="async">
+        </div>
+      </figure>
+
+      <p class="ch02__line ch02__line--2" data-reveal>وبعدها بديت الاحظك اكثر</p>
+    </div>
+  </section>
+
+  <!-- ============ CHAPTER 03 — huge typography ============ -->
+  <section class="ch ch03" id="ch03" data-chapter="03" data-chapter-name="بديت احبك">
+    <div class="ch03__bg" data-parallax="0.08" aria-hidden="true">
+      <img src="assets/generated/backgrounds/falling-in-love.webp" alt="" loading="lazy" decoding="async">
+    </div>
+    <span class="mono ch03__num">CHAPTER 03</span>
+    <h2 class="ch03__word" data-reveal-word>
+      <span>بديت</span>
+      <span>احبك</span>
+    </h2>
+    <div class="ch03__side">
+      <p data-reveal>ما عرفت متى بالضبط تغير كل شيء</p>
+      <p data-reveal>لكن في وقت ما صرت احب وجودك</p>
+    </div>
+  </section>
+
+  <!-- ============ CHAPTER 04 — split text / image ============ -->
+  <section class="ch ch04" id="ch04" data-chapter="04" data-chapter-name="كنت ادور سبب">
+    <div class="ch04__text">
+      <span class="mono">CHAPTER 04</span>
+      <h2 class="serif" data-reveal>كنت ادور سبب</h2>
+      <div class="ch04__lines">
+        <p data-reveal>بديت ادور اي موضوع اقدر اتكلم معك فيه</p>
+        <p data-reveal>ما كان يهمني الموضوع</p>
+        <p class="em" data-reveal>كنت بس ابي اتكلم معك</p>
+      </div>
+      <span class="ch04__pageno mono">04 / 09</span>
+    </div>
+    <figure class="ch04__image" data-reveal data-tilt="-1.2">
+      <img src="assets/generated/backgrounds/conversation.webp" alt="" loading="lazy" decoding="async">
+      <img class="ch04__rose" src="assets/generated/flowers/rose-03.webp" alt="" loading="lazy" decoding="async">
+    </figure>
+  </section>
+
+  <!-- ============ CHAPTER 05 — conversation album ============ -->
+  <section class="ch ch05" id="ch05" data-chapter="05" data-chapter-name="رسائلك">
+    <div class="ch05__head">
+      <span class="mono">CHAPTER 05</span>
+      <h2 class="display" data-reveal>رسائلك</h2>
+    </div>
+
+    <div class="ch05__body">
+      <div class="ch05__col">
+        <p data-reveal>كل ما ترسلين رسالة كنت احاول ارد</p>
+        <p data-reveal>يمكن بالنسبة لك كانت مجرد رسالة</p>
+        <p class="em" data-reveal>لكن بالنسبة لي كانت فرصة ثانية اتكلم معك</p>
+        <p class="note hand" data-reveal>خليتها كما هي بدون ما اغير حرف</p>
+      </div>
+
+      <div class="thread" data-reveal>
+        <div class="thread__head">
+          <span class="mono thread__label">من محادثتنا</span>
+          <span class="mono thread__time" id="threadTime">12:51</span>
+        </div>
+        <div class="thread__body" id="threadBody"></div>
+        <div class="thread__foot">
+          <span class="rule" aria-hidden="true"></span>
+          <span class="mono dim">نفس الكلام بالحرف</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CHAPTER 06 — time with you / games ============ -->
+  <section class="ch ch06" id="ch06" data-chapter="06" data-chapter-name="وقت معك">
+    <div class="ch06__bg" aria-hidden="true">
+      <img src="assets/generated/backgrounds/gaming-memory.webp" alt="" loading="lazy" decoding="async">
+    </div>
+    <div class="ch06__inner">
+      <span class="mono">CHAPTER 06</span>
+      <h2 class="serif" data-reveal>وقت معك</h2>
+      <div class="ch06__lines">
+        <p data-reveal>صرنا نلعب مع بعض</p>
+        <p data-reveal>والالعاب صارت طريقة ثانية اقضي فيها وقت معك</p>
+        <p class="em" data-reveal>بصراحة كنت احب الوقت معك اكثر من اللعبة نفسها</p>
+      </div>
+      <div class="ch06__shots" data-reveal>
+        <figure class="shot" data-tilt="1.8">
+          <div class="ph ph--wide" data-ph-label="لقطة من اللعبة">
+            <img data-src="assets/images/memories/game-01.jpg" alt="" loading="lazy" decoding="async">
+          </div>
+        </figure>
+        <figure class="shot shot--sm" data-tilt="-2.4">
+          <div class="ph ph--wide" data-ph-label="لقطة ثانية">
+            <img data-src="assets/images/memories/game-02.jpg" alt="" loading="lazy" decoding="async">
+          </div>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CHAPTER 07 — collage ============ -->
+  <section class="ch ch07" id="ch07" data-chapter="07" data-chapter-name="صرتي مهمة">
+    <span class="mono ch07__num">CHAPTER 07</span>
+    <h2 class="ch07__title display" data-reveal>صرتي مهمة</h2>
+
+    <div class="collage">
+      <p class="collage__line collage__line--a" data-reveal>مع الوقت ما عاد وجودك شيء عادي عندي</p>
+
+      <figure class="collage__item collage__item--1" data-reveal data-tilt="-1.8">
+        <div class="ph" data-ph-label="ذكرى">
+          <img data-src="assets/images/memories/memory-02.jpg" alt="" loading="lazy" decoding="async">
+        </div>
+      </figure>
+
+      <figure class="collage__item collage__item--2" data-reveal data-tilt="2.6">
+        <div class="ph" data-ph-label="ذكرى">
+          <img data-src="assets/images/memories/memory-03.jpg" alt="" loading="lazy" decoding="async">
+        </div>
+        <figcaption class="hand">تفاصيلك الصغيرة</figcaption>
+      </figure>
+
+      <p class="collage__line collage__line--b" data-reveal>صرت اهتم فيك اكثر</p>
+
+      <figure class="collage__item collage__item--3" data-reveal data-tilt="-3">
+        <div class="ph" data-ph-label="ذكرى">
+          <img data-src="assets/images/memories/memory-04.jpg" alt="" loading="lazy" decoding="async">
+        </div>
+      </figure>
+
+      <img class="collage__rose" src="assets/generated/flowers/rose-02.webp" alt="" loading="lazy" decoding="async">
+      <p class="collage__line collage__line--c em" data-reveal>وصرت احب تفاصيلك الصغيرة</p>
+    </div>
+  </section>
+
+  <!-- ============ CHAPTER 08 — THE CONFESSION ============ -->
+  <section class="ch confession" id="ch08" data-chapter="08" data-chapter-name="الاعتراف">
+    <div class="confession__bg" aria-hidden="true">
+      <img src="assets/generated/backgrounds/confession.webp" alt="" loading="lazy" decoding="async">
+    </div>
+
+    <div class="confession__void" aria-hidden="true"></div>
+
+    <div class="confession__inner">
+      <span class="mono confession__label">CHAPTER 08</span>
+
+      <div class="confession__date">
+        <span class="confession__day" data-reveal-slow>19</span>
+        <span class="confession__month" data-reveal-slow>اوت</span>
+        <span class="confession__year" data-reveal-slow>2026</span>
+      </div>
+
+      <div class="confession__lines">
+        <p data-reveal-slow>اليوم اللي قررت فيه اقول لك كل شيء</p>
+        <p data-reveal-slow>ما عاد ابي اخبي اللي كان في قلبي</p>
+      </div>
+
+      <p class="confession__final" data-final>احبك يا سارة</p>
+    </div>
+  </section>
+
+  <!-- ============ COUNTER ============ -->
+  <section class="counter" id="counter" data-chapter="—" data-chapter-name="منذ ذلك اليوم">
+    <div class="counter__head">
+      <span class="mono">منذ 19.08.2026</span>
+      <span class="rule" aria-hidden="true"></span>
+    </div>
+    <div class="counter__grid" id="counterGrid">
+      <div class="counter__cell"><span class="counter__val" id="cDays">0</span><span class="counter__key mono">يوم</span></div>
+      <div class="counter__cell"><span class="counter__val" id="cHours">0</span><span class="counter__key mono">ساعة</span></div>
+      <div class="counter__cell"><span class="counter__val" id="cMins">0</span><span class="counter__key mono">دقيقة</span></div>
+      <div class="counter__cell"><span class="counter__val" id="cSecs">0</span><span class="counter__key mono">ثانية</span></div>
+    </div>
+    <p class="counter__note hand">وكل ثانية منها تعني لي شيء</p>
+  </section>
+
+  <!-- ============ GALLERY ============ -->
+  <section class="gallery" id="gallery" data-chapter="—" data-chapter-name="ذكرياتنا">
+    <div class="gallery__head">
+      <h2 class="serif" data-reveal>ذكرياتنا</h2>
+      <p class="mono dim">اضغط على اي صورة</p>
+    </div>
+    <div class="masonry" id="masonry"></div>
+  </section>
+
+  <!-- ============ LOVE LETTER ============ -->
+  <section class="letter" id="letter" data-chapter="09" data-chapter-name="رسالة اخيرة">
+    <div class="letter__paper">
+      <div class="letter__head">
+        <span class="mono">CHAPTER 09</span>
+        <span class="letter__to">الى سارة</span>
+      </div>
+      <div class="letter__body" id="letterBody"></div>
+      <div class="letter__sign">
+        <span class="hand">Raouf</span>
+        <span class="mono">19.08.2026</span>
+      </div>
+      <img class="letter__rose" src="assets/generated/flowers/rose-01.webp" alt="" loading="lazy" decoding="async">
+    </div>
+  </section>
+
+  <!-- ============ END ============ -->
+  <footer class="end" id="end">
+    <div class="end__bg" aria-hidden="true">
+      <img src="assets/generated/backgrounds/final.webp" alt="" loading="lazy" decoding="async">
+    </div>
+    <div class="end__inner">
+      <span class="end__mark">R <i>&#9829;</i> S</span>
+      <span class="end__names">رؤوف × سارة</span>
+      <span class="end__date mono">19.08.2026</span>
+      <button class="end__up" id="upBtn" type="button">من البداية</button>
+    </div>
+  </footer>
+
+</main>
+
+<!-- ============ LIGHTBOX ============ -->
+<div class="lb" id="lightbox" role="dialog" aria-modal="true" aria-label="عرض الصورة" hidden>
+  <button class="lb__close" id="lbClose" type="button" aria-label="اغلاق">&times;</button>
+  <button class="lb__nav lb__nav--prev" id="lbPrev" type="button" aria-label="السابق">&#8249;</button>
+  <button class="lb__nav lb__nav--next" id="lbNext" type="button" aria-label="التالي">&#8250;</button>
+  <figure class="lb__stage" id="lbStage">
+    <img id="lbImg" src="" alt="">
+    <figcaption class="lb__cap"><span id="lbCap" class="mono"></span><span id="lbCount" class="mono dim"></span></figcaption>
+  </figure>
+</div>
+
+<script src="js/script.js"></script>
+</body>
+</html>
