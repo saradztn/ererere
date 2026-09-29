@@ -1,0 +1,102 @@
+<meta>
+    <info author="AI Agent" name="Referral System" version="1.0.0" type="script"
+          description="نظام احالة كامل مبني على NovaUI v3.0.0" />
+
+    <!-- ============================================================ -->
+    <!--  NOVAUI DEPENDENCY                                          -->
+    <!--  NovaUI v3.0.0 is an EXTERNAL resource. It is NOT shipped   -->
+    <!--  inside this resource and must be running next to it.       -->
+    <!--  If your NovaUI folder has a different name, change this     -->
+    <!--  <include> tag AND ReferralConfig.novaui.resourceNames      -->
+    <!--  in config.lua (first entry).                               -->
+    <!-- ============================================================ -->
+    <include resource="NovaUI" />
+
+    <min_mta_version client="1.5.9" server="1.5.9" />
+
+    <!-- ============================================================ -->
+    <!--  SHARED                                                      -->
+    <!-- ============================================================ -->
+    <script src="config.lua" type="shared" />
+    <script src="shared.lua" type="shared" />
+
+    <!-- ============================================================ -->
+    <!--  SERVER  (storage loads first: nothing else touches SQL)      -->
+    <!-- ============================================================ -->
+    <script src="server/storage.lua"    type="server" />
+    <script src="server/validation.lua" type="server" />
+    <script src="server/referrals.lua"  type="server" />
+    <script src="server/rewards.lua"    type="server" />
+    <script src="server/main.lua"       type="server" />
+    <script src="server.lua"            type="server" />
+
+    <!-- ============================================================ -->
+    <!--  CLIENT (order: bridge -> helpers -> state -> navigation ->   -->
+    <!--  pages -> dialogs -> window)                                  -->
+    <!-- ============================================================ -->
+    <script src="client/novaui.lua"     type="client" />
+    <script src="client/ui.lua"         type="client" />
+    <script src="client/state.lua"      type="client" />
+    <script src="client/navigation.lua" type="client" />
+    <script src="client/dashboard.lua"  type="client" />
+    <script src="client/referrals.lua"  type="client" />
+    <script src="client/rewards.lua"    type="client" />
+    <script src="client/statistics.lua" type="client" />
+    <script src="client/conditions.lua" type="client" />
+    <script src="client/dialogs.lua"    type="client" />
+    <script src="client/main.lua"       type="client" />
+    <script src="client.lua"            type="client" />
+
+    <!-- ============================================================ -->
+    <!--  ASSETS                                                      -->
+    <!-- ============================================================ -->
+    <file src="assets/fonts/arabic.ttf" />
+    <file src="assets/icons/referral.png" />
+    <file src="assets/icons/referral-link.png" />
+    <file src="assets/icons/invite.png" />
+    <file src="assets/icons/share.png" />
+    <file src="assets/icons/reward.png" />
+    <file src="assets/icons/gift.png" />
+    <file src="assets/icons/user-add.png" />
+    <file src="assets/icons/team.png" />
+    <file src="assets/icons/growth.png" />
+    <file src="assets/icons/coins.png" />
+    <file src="assets/icons/wallet.png" />
+    <file src="assets/icons/milestone.png" />
+    <file src="assets/icons/achievement.png" />
+    <file src="assets/icons/activity.png" />
+    <file src="assets/icons/analytics.png" />
+    <file src="assets/sounds/copy.wav" />
+    <file src="assets/sounds/reward.wav" />
+    <file src="assets/sounds/error.wav" />
+    <file src="assets/sounds/open.wav" />
+
+    <!-- ============================================================ -->
+    <!--  EXPORTS                                                     -->
+    <!-- ============================================================ -->
+    <export function="open"             type="client" />
+    <export function="close"            type="client" />
+    <export function="toggle"           type="client" />
+    <export function="getReferralCode"  type="client" />
+    <export function="getReferralStats" type="client" />
+
+    <export function="getReferralCode"  type="server" />
+    <export function="getReferralStats" type="server" />
+    <export function="getReferrals"     type="server" />
+    <export function="isReferredBy"     type="server" />
+    <export function="setPlayerLevel"   type="server" />
+    <export function="addPlaytime"      type="server" />
+
+    <!-- ============================================================ -->
+    <!--  SETTINGS (read in config.lua through get(), restart the      -->
+    <!--  resource after changing them)                                -->
+    <!-- ============================================================ -->
+    <settings>
+        <setting name="enabled"           value="true" friendlyname="تشغيل النظام" accept="true,false" />
+        <setting name="rewardPerReferral" value="5000" friendlyname="مكافاة كل احالة" />
+        <setting name="codeLength"        value="8"    friendlyname="طول الكود" />
+        <setting name="maxReferrals"      value="0"    friendlyname="الحد الاقصى (0 = غير محدود)" />
+        <setting name="openKey"           value="F6"   friendlyname="زر الفتح" />
+        <setting name="sidebarSide"       value="right" friendlyname="جهة القائمة" accept="right,left" />
+    </settings>
+</meta>
