@@ -205,142 +205,346 @@ function dbFree() end
 
 NOVAUI_MOCK = r"""
 --============================================================--
---  NOVAUI v3.0.0 MOCK
---  Implements the documented API surface only. Unknown methods
---  return nil so the resource's defensive paths are exercised.
+--  NOVAUI v3.0.0 MOCK  (mirrors the REAL export contract)
 --============================================================--
-TEST.elements = {}
+--  MTA gives every resource its own Lua VM, so a global `NovaUI` table created
+--  inside the NovaUI resource is NOT reachable from another resource. The only
+--  way in is the export list NovaUI declares in its meta.xml, and novaCreate
+--  returns a component ID - not a component.
+--
+--  This mock therefore exposes exactly those exports and behaves the way the
+--  real library does:
+--    * novaCreate(typeName, props, parentId) -> id (number) | false
+--    * the onClick/onChange/onHover/onFocus/onBlur/onClose/onSubmit props are
+--      bound by the library itself, exactly like Component:init does
+--    * events that are NOT auto-bound (select, sort, minimize, doubleClick)
+--      only work through novaOn - which is why that export exists
+--
+--  TEST helpers used by the checks below:
+--    TEST.click(id) / TEST.change(id, value) / TEST.emit(id, event, ...)
+--    TEST.destroyed(id) / TEST.props(id) / TEST.components()
+--============================================================--
+TEST.elements     = {}
 TEST.notifications = {}
+TEST.confirms     = {}
+TEST.themes       = {}
 TEST.elementCount = 0
+TEST.destroyedIds = {}
+TEST.calls        = {}
 
-local function applySetter(el, key, value)
-    local setter = "set" .. key:sub(1, 1):upper() .. key:sub(2)
-    if el[setter] then
-        el[setter](el, value)
+local function nextId()
+    TEST.elementCount = TEST.elementCount + 1
+    return TEST.elementCount
+end
+
+--  the props NovaUI binds itself when a component is created
+local PROP_EVENTS = {
+    click = "onClick", change = "onChange", hover = "onHover",
+    focus = "onFocus", blur = "onBlur", close = "onClose", submit = "onSubmit",
+}
+
+local function newComponent(typeName, props, parentId)
+    local comp = {
+        id       = nextId(),
+        type     = tostring(typeName):lower(),
+        props    = props or {},
+        parent   = parentId,
+        children = {},
+        visible  = (props or {}).visible ~= false,
+        value    = (props or {}).value,
+        text     = tostring((props or {}).text or ""),
+        handlers = {},
+        alive    = true,
+    }
+    --  the data components keep their rows reachable both ways
+    comp.rows = (props or {}).rows or (props or {}).data
+    comp.data = (props or {}).data or (props or {}).rows
+    for event, propName in pairs(PROP_EVENTS) do
+        local fn = comp.props[propName]
+        if type(fn) == "function" then comp.handlers[event] = fn end
+    end
+    TEST.elements[comp.id] = comp
+    return comp
+end
+
+local function resolve(elementOrId)
+    if type(elementOrId) == "table" and elementOrId.id then return elementOrId end
+    return TEST.elements[elementOrId]
+end
+
+--============================================================--
+--  EXPORTED FUNCTIONS (the names NovaUI declares in meta.xml)
+--============================================================--
+function novaCreate(typeName, props, parentId)
+    if type(typeName) ~= "string" or typeName == "" then return false end
+    if props ~= nil and type(props) ~= "table" then props = {} end
+    local comp = newComponent(typeName, props, parentId)
+    if parentId and TEST.elements[parentId] then
+        table.insert(TEST.elements[parentId].children, comp.id)
+    end
+    return comp.id
+end
+
+function novaDestroy(elementOrId)
+    local comp = resolve(elementOrId)
+    if not comp or not comp.alive then return false end
+    comp.alive = false
+    TEST.destroyedIds[comp.id] = true
+    TEST.elements[comp.id] = nil
+    return true
+end
+
+function novaSetVisible(elementId, visible)
+    local comp = resolve(elementId)
+    if not comp then return false end
+    comp.visible = visible ~= false
+    return true
+end
+
+function novaUpdate(elementId, newProps)
+    local comp = resolve(elementId)
+    if not comp or type(newProps) ~= "table" then return false end
+    for k, v in pairs(newProps) do comp.props[k] = v end
+    if newProps.text ~= nil then comp.text = tostring(newProps.text) end
+    if newProps.value ~= nil then comp.value = newProps.value end
+    if newProps.visible ~= nil then comp.visible = newProps.visible ~= false end
+    if newProps.rows ~= nil or newProps.data ~= nil then
+        comp.rows = newProps.rows or newProps.data
+        comp.data = newProps.data or newProps.rows
+    end
+    return true
+end
+
+function novaCall(elementId, methodName, ...)
+    local comp = resolve(elementId)
+    if not comp then return false end
+    TEST.calls[#TEST.calls + 1] = { id = comp.id, method = methodName, args = { ... } }
+    if methodName == "setRows" or methodName == "setData" or methodName == "setItems" then
+        local rows = (...)
+        comp.props.data = rows
+        comp.props.rows = rows
+        comp.rows, comp.data = rows, rows
         return true
+    elseif methodName == "setFilter" then
+        comp.props.filter = (...)
+        return true
+    elseif methodName == "setSort" or methodName == "sortBy" then
+        comp.props.sortColumn = (...)
+        return true
+    elseif methodName == "setType" then
+        comp.props.chartType = (...)
+        return true
+    elseif methodName == "setText" then
+        comp.text = tostring((...))
+        return true
+    elseif methodName == "setValue" then
+        comp.value = (...)
+        return true
+    elseif methodName == "setVisible" then
+        comp.visible = (...) ~= false
+        return true
+    elseif methodName == "bringToFront" or methodName == "focus" then
+        return true
+    elseif methodName == "destroy" then
+        return novaDestroy(comp.id)
     end
     return false
 end
 
-local ElementMeta = {}
-ElementMeta.__index = function(t, key)
-    local value = rawget(ElementMeta, key)
-    if value ~= nil then return value end
+function novaOn(elementId, eventName, handler)
+    local comp = resolve(elementId)
+    if not comp or type(handler) ~= "function" then return false end
+    comp.handlers[eventName] = handler
+    return true
+end
+
+function novaOnce(elementId, eventName, handler)
+    local comp = resolve(elementId)
+    if not comp or type(handler) ~= "function" then return false end
+    local fired = false
+    comp.handlers[eventName] = function(...)
+        if fired then return end
+        fired = true
+        return handler(...)
+    end
+    return true
+end
+
+function novaOff(elementId, eventName, handler)
+    local comp = resolve(elementId)
+    if not comp then return false end
+    if handler == nil then
+        comp.handlers[eventName] = nil
+    elseif comp.handlers[eventName] == handler then
+        comp.handlers[eventName] = nil
+    end
+    return true
+end
+
+function novaAnimate(elementId, spec)
+    local comp = resolve(elementId)
+    if not comp or type(spec) ~= "table" then return false end
+    return true
+end
+
+function novaGetValue(elementId)
+    local comp = resolve(elementId)
+    return comp and comp.value or nil
+end
+
+function novaSetText(elementId, text)
+    local comp = resolve(elementId)
+    if not comp then return false end
+    comp.text = tostring(text)
+    return true
+end
+
+function novaNotify(options)
+    TEST.notifications[#TEST.notifications + 1] = options or {}
+    return nextId()
+end
+
+function novaConfirm(options)
+    TEST.confirms[#TEST.confirms + 1] = options or {}
+    return nextId()
+end
+
+function novaSetTheme(themeName)
+    TEST.themes[#TEST.themes + 1] = themeName
+    return true
+end
+
+function novaCreateTheme(name, definition, baseTheme)
+    TEST.themes[#TEST.themes + 1] = name
+    return true
+end
+
+function novaScale(value)
+    return math.floor((tonumber(value) or 0) * 1.0)
+end
+
+--============================================================--
+--  the exports table, exactly as MTA builds it:
+--  exports[name].ANYTHING is a function even when the resource
+--  never declared it - which is why the bridge must ask
+--  getResourceExportedFunctions() what is really there.
+--============================================================--
+local NOVA_EXPORTS = {
+    "novaCreate", "novaDestroy", "novaSetTheme", "novaCreateTheme", "novaScale",
+    "novaNotify", "novaConfirm", "novaSetVisible", "novaOn", "novaOnce", "novaOff",
+    "novaUpdate", "novaCall", "novaAnimate", "novaGetValue", "novaSetText",
+}
+
+local exportsMT = {}
+exportsMT.__index = function(tbl, key)
+    if type(key) ~= "string" then key = tostring(key) end
+    --  a real export resolves to the function, anything else to a stub that
+    --  fails when called - the same trap MTA sets
+    for _, name in ipairs(NOVA_EXPORTS) do
+        if name == key and type(_G[key]) == "function" then
+            return function(_, ...) return _G[key](...) end
+        end
+    end
+    return function() error("call: failed to call '" .. tostring(key) .. "' [string \"?\"]", 0) end
+end
+
+exports = setmetatable({}, {
+    __index = function(tbl, key)
+        if type(key) ~= "string" then key = tostring(key) end
+        if key:lower() == "novaui" or key:lower() == "nova" or key:lower() == "nova_ui"
+            or key:lower() == "nova-ui" or key:lower() == "novauiv3" then
+            return setmetatable({}, exportsMT)
+        end
+        return setmetatable({}, exportsMT)
+    end
+})
+
+function getResourceFromName(name)
+    local lowered = tostring(name):lower()
+    if lowered == "novaui" or lowered == "nova" or lowered == "nova_ui"
+        or lowered == "nova-ui" or lowered == "novauiv3" then
+        return { __resource = true, name = name }
+    end
     return nil
 end
 
-local function newElement(kind, props, parent)
-    TEST.elementCount = TEST.elementCount + 1
-    local el = {
-        __element = true, kind = kind, props = props or {},
-        children = {}, listeners = {}, parent = parent,
-        visible = props and props.visible ~= false,
-        alpha = 255, text = props and props.text, value = props and props.value,
-        enabled = true, x = props and props.x, y = props and props.y,
-        width = props and props.width, height = props and props.height,
-        id = TEST.elementCount,
-    }
-    setmetatable(el, { __index = ElementMeta })
-    TEST.elements[#TEST.elements + 1] = el
-    if parent then parent.children[#parent.children + 1] = el end
-    return el
+function getResourceState(res)
+    return res and res.__resource and "running" or nil
 end
 
-function ElementMeta:create(kind, props)
-    return newElement(kind, props, self)
+function getResourceName(res)
+    return res and res.name or "unknown"
 end
-function ElementMeta:addChild(child) self.children[#self.children + 1] = child return self end
-function ElementMeta:removeChild(child)
-    for i, c in ipairs(self.children) do
-        if c == child then table.remove(self.children, i) break end
-    end
-    return self
-end
-function ElementMeta:clearChildren() self.children = {} return self end
-function ElementMeta:setPosition(x, y) self.x, self.y = x, y return self end
-function ElementMeta:getPosition() return self.x, self.y end
-function ElementMeta:getScreenPosition() return 0, 0 end
-function ElementMeta:setSize(w, h) self.width, self.height = w, h return self end
-function ElementMeta:getSize() return self.width, self.height end
-function ElementMeta:setVisible(v) self.visible = v and true or false return self end
-function ElementMeta:show() self.visible = true return self end
-function ElementMeta:hide() self.visible = false return self end
-function ElementMeta:toggle() self.visible = not self.visible return self end
-function ElementMeta:isVisible() return self.visible end
-function ElementMeta:setEnabled(v) self.enabled = v and true or false return self end
-function ElementMeta:isEnabled() return self.enabled end
-function ElementMeta:setAlpha(a) self.alpha = a return self end
-function ElementMeta:getAlpha() return self.alpha end
-function ElementMeta:setText(t) self.text = t return self end
-function ElementMeta:getText() return self.text end
-function ElementMeta:setValue(v) self.value = v return self end
-function ElementMeta:getValue() return self.value end
-function ElementMeta:setTooltip(t) self.tooltip = t return self end
-function ElementMeta:focus() self.focused = true return self end
-function ElementMeta:blur() self.focused = false return self end
-function ElementMeta:bringToFront() self.z = 99 return self end
-function ElementMeta:sendToBack() self.z = 0 return self end
-function ElementMeta:animate(props) self.animated = props return self end
-function ElementMeta:update(props)
-    if type(props) ~= "table" then return self end
-    for key, value in pairs(props) do
-        self.props[key] = value
-        applySetter(self, key, value)
-    end
-    return self
-end
-function ElementMeta:destroy() self.destroyed = true self.visible = false return self end
-function ElementMeta:on(name, fn) self.listeners[name] = self.listeners[name] or {} self.listeners[name][#self.listeners[name] + 1] = fn return self end
-function ElementMeta:once(name, fn) self.listeners[name] = self.listeners[name] or {} self.listeners[name][#self.listeners[name] + 1] = fn return self end
-function ElementMeta:off(name, fn)
-    if not self.listeners[name] then return self end
-    for i, f in ipairs(self.listeners[name]) do
-        if f == fn then table.remove(self.listeners[name], i) break end
-    end
-    return self
-end
-function ElementMeta:removeAllListeners() self.listeners = {} return self end
-function ElementMeta:fire(name, ...)
-    if not self.listeners[name] then return end
-    for _, fn in ipairs(self.listeners[name]) do
-        fn(self, ...)
-    end
-end
-function ElementMeta:setRows(rows) self.rows = rows return self end
-function ElementMeta:setData(data) self.data = data return self end
-function ElementMeta:setItems(items) self.items = items return self end
-function ElementMeta:setFilter(q) self.filter = q return self end
-function ElementMeta:setSort(key, desc) self.sortKey, self.sortDesc = key, desc return self end
 
---  NovaUI v3 exposes the factory as a METHOD (self first), which is what
---  MTA reports as 'NovaUI:create' when a call fails.
-NovaUI = {}
-function NovaUI:create(kind, props)
-    --  the real NovaUI v3 factory is a METHOD: calling it dot style passes
-    --  the component type as `self` and blows up inside the library.
-    assert(type(self) == "table", "create must be called as NovaUI:create(kind, props)")
-    assert(type(kind) == "string", "create expects a component type string")
-    return newElement(kind, props, nil)
+function getResources()
+    return { getResourceFromName("NovaUI") }
 end
-function NovaUI:notify(props) TEST.notifications[#TEST.notifications + 1] = props end
-function NovaUI:animate(el, props) if el then el.animated = props end end
-function NovaUI:setFont(path) TEST.font = path end
-function NovaUI:useFont(path) TEST.font = TEST.font or path end
-function NovaUI:helperProbe() return "ok" end
 
-function TEST.findElements(kind)
-    local out = {}
-    for _, el in ipairs(TEST.elements) do
-        if el.kind == kind then out[#out + 1] = el end
-    end
-    return out
+function getResourceExportedFunctions(res)
+    if not res or not res.__resource then return nil end
+    return NOVA_EXPORTS
 end
-function TEST.findByName(name)
-    for _, el in ipairs(TEST.elements) do
-        if el.props and el.props.name == name then return el end
-    end
-    return nil
+
+--============================================================--
+--  TEST HELPERS (drive the mock the way a player would)
+--============================================================--
+function TEST.props(id)
+    local comp = TEST.elements[id]
+    return comp and comp.props or nil
 end
+
+function TEST.component(id)
+    return TEST.elements[id]
+end
+
+function TEST.components()
+    return TEST.elements
+end
+
+function TEST.wasDestroyed(id)
+    return TEST.destroyedIds[id] == true
+end
+
+function TEST.emit(id, event, ...)
+    local comp = TEST.elements[id]
+    if not comp then return false end
+    local handler = comp.handlers[event]
+    if type(handler) ~= "function" then return false end
+    handler(...)
+    return true
+end
+
+function TEST.click(id, ...)
+    return TEST.emit(id, "click", ...)
+end
+
+function TEST.change(id, value)
+    local comp = TEST.elements[id]
+    if not comp then return false end
+    comp.value = value
+    return TEST.emit(id, "change", value)
+end
+
+function TEST.select(id, row, index)
+    return TEST.emit(id, "select", row, index)
+end
+
+function TEST.sort(id, key, ascending)
+    return TEST.emit(id, "sort", key, ascending)
+end
+
+function TEST.children(id)
+    local comp = TEST.elements[id]
+    return comp and comp.children or {}
+end
+
+function TEST.visible(id)
+    local comp = TEST.elements[id]
+    return comp and comp.visible or false
+end
+
+--  the global NovaUI table does NOT exist for another resource (own VM)
+NovaUI = nil
 """
 
 SERVER_TESTS = r"""
@@ -557,6 +761,23 @@ local function check(label, condition, detail)
     end
 end
 
+--  every NovaUI component the mock created, in creation order
+local function elementsOf(kind)
+    local out = {}
+    for _, comp in pairs(TEST.elements) do
+        if comp.type == kind then out[#out + 1] = comp end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
+local function byName(name)
+    for _, comp in pairs(TEST.elements) do
+        if comp.props and comp.props.name == name then return comp end
+    end
+    return nil
+end
+
 print("== client ==")
 ReferralConfig.debug = false
 
@@ -565,6 +786,15 @@ triggerEvent("onClientResourceStart", resourceRoot)
 check("client initialised", ReferralClient.initialized == true)
 check("F6 bound", TEST.keys["F6"] ~= nil)
 check("command bound", TEST.commands["referral"] ~= nil)
+
+--  MTA gives every resource its own VM, so the NovaUI global is unreachable:
+--  the bridge MUST find the library through its exports, not through a global
+check("global NovaUI is nil (own VM)", NovaUI == nil, tostring(NovaUI))
+check("novaCreate is exported", type(exports.NovaUI.novaCreate) == "function")
+check("bridge resolves NovaUI via exports",
+    ReferralClient.novaui.resolve() ~= nil, tostring(ReferralClient.novaui.name()))
+check("resolved through exports", (ReferralClient.novaui.name() or ""):find("exports", 1, true) ~= nil,
+    tostring(ReferralClient.novaui.name()))
 
 --  open the window
 local opened = ReferralClient.main.open()
@@ -580,7 +810,8 @@ check("data requested", TEST.lastServerEvent and TEST.lastServerEvent.name == "r
 --  no duplicate window on a second open
 ReferralClient.main.open()
 check("no duplicate window", ReferralClient.main.window == firstWindow)
-check("window count is 1", #TEST.findElements("window") == 1, #TEST.findElements("window"))
+check("window count is 1", #elementsOf("window") == 1, #elementsOf("window"))
+check("handle was flushed into a real component", firstWindow.id ~= nil, tostring(firstWindow.id))
 
 --  feed a real shaped payload
 local payload = {
@@ -648,35 +879,35 @@ check("loading cleared", ReferralClient.main.statusKind == nil,
     tostring(ReferralClient.main.statusKind))
 
 --  dashboard bindings
-local heroCode = TEST.findByName("heroCode")
+local heroCode = byName("heroCode")
 check("hero code rendered", heroCode and heroCode.text == "RAOUF-X72K", heroCode and heroCode.text)
-local nextTitle = TEST.findByName("nextRewardTitle")
+local nextTitle = byName("nextRewardTitle")
 check("next reward text", nextTitle and nextTitle.text:find("18 من 25", 1, true) ~= nil,
     nextTitle and nextTitle.text)
-local progress = TEST.findByName("nextRewardProgress")
+local progress = byName("nextRewardProgress")
 check("progress value", progress and progress.value == 72, progress and progress.value)
-local hint = TEST.findByName("nextRewardHint")
+local hint = byName("nextRewardHint")
 check("next reward hint", hint and hint.text:find("150,000", 1, true) ~= nil, hint and hint.text)
-check("kpi cards created", #TEST.findElements("statscard") == 4, #TEST.findElements("statscard"))
+check("kpi cards created", #elementsOf("statscard") == 4, #elementsOf("statscard"))
 
 --  recent referrals list rows
-local recentList = TEST.findByName("recentList")
+local recentList = byName("recentList")
 check("recent list filled", recentList and recentList.rows and #recentList.rows == 6,
     recentList and recentList.rows and #recentList.rows)
 
 --  navigation
 ReferralClient.navigation.show("referrals")
 check("referrals page active", ReferralClient.navigation.current() == "referrals")
-local referralsPanel = TEST.findByName("pageReferrals")
+local referralsPanel = byName("pageReferrals")
 check("referrals page visible", referralsPanel and referralsPanel.visible == true)
-local dashboardPanel = TEST.findByName("pageDashboard")
+local dashboardPanel = byName("pageDashboard")
 check("dashboard hidden", dashboardPanel and dashboardPanel.visible == false)
-local breadcrumb = TEST.findByName("referralBreadcrumb")
+local breadcrumb = byName("referralBreadcrumb")
 check("breadcrumb updated", breadcrumb and breadcrumb.props.items[2].text == "الاحالات",
     breadcrumb and breadcrumb.props.items[2].text)
 
 --  table rows + search + filter
-local referralsTable = TEST.findByName("referralsTable")
+local referralsTable = byName("referralsTable")
 check("table filled", referralsTable and referralsTable.rows and #referralsTable.rows == 24,
     referralsTable and #referralsTable.rows)
 ReferralClient.state.setQuery("player3")
@@ -696,22 +927,26 @@ check("sorting works", sorted[1].level >= sorted[#sorted].level, sorted[1].level
 
 --  empty state
 ReferralClient.state.setQuery("zzzz-nothing")
-check("empty state visible", TEST.findByName("emptyBlock") ~= nil)
+check("empty state visible", byName("emptyBlock") ~= nil)
 ReferralClient.state.setQuery("")
 
 --  row selection opens the detail dialog
 local detail = ReferralClient.dialogs.openDetail(sorted[1])
 check("detail dialog created", detail ~= nil)
-check("timeline created", #TEST.findElements("timeline") >= 1)
+check("detail dialog flushed", detail.id ~= nil, tostring(detail.id))
+check("timeline created", #elementsOf("timeline") >= 1)
+local detailId = detail.id
 ReferralClient.dialogs.close("detail")
-check("detail dialog destroyed", detail.destroyed == true)
+check("detail dialog destroyed", detailId ~= nil and TEST.wasDestroyed(detailId),
+    tostring(detailId))
+check("dialog marked dead", detail.alive == false)
 
 --  share dialog
 local share = ReferralClient.dialogs.openShare()
 check("share dialog created", share ~= nil)
-check("clipboard message", TEST.clips[#TEST.clips] == nil)
-local copyMessage = TEST.findByName("shareCopyMessage")
-copyMessage:fire("click")
+local copyMessage = byName("shareCopyMessage")
+check("copy button created", copyMessage ~= nil)
+TEST.click(copyMessage.id)
 check("invite message copied", TEST.clips[#TEST.clips]:find("RAOUF-X72K", 1, true) ~= nil,
     TEST.clips[#TEST.clips])
 check("copy sound played", #TEST.sounds >= 1)
@@ -720,10 +955,10 @@ ReferralClient.dialogs.close("share")
 --  apply code dialog
 local apply = ReferralClient.dialogs.openApplyCode()
 check("apply dialog created", apply ~= nil)
-local edit = TEST.findByName("applyEdit")
-check("edit focused", edit and edit.focused == true)
-edit:setValue("RAOUF-X72K")
-TEST.findByName("applySubmit"):fire("click")
+local edit = byName("applyEdit")
+check("edit created", edit ~= nil)
+edit.value = "RAOUF-X72K"
+TEST.click(byName("applySubmit").id)
 check("apply code sent to server",
     TEST.lastServerEvent.name == "referral:applyCode" and TEST.lastServerEvent.args[1] == "RAOUF-X72K",
     TEST.lastServerEvent.args and TEST.lastServerEvent.args[1])
@@ -731,35 +966,35 @@ ReferralClient.dialogs.close("apply")
 
 --  rewards page
 ReferralClient.navigation.show("rewards")
-local rewardsPanel = TEST.findByName("pageRewards")
+local rewardsPanel = byName("pageRewards")
 check("rewards page visible", rewardsPanel and rewardsPanel.visible == true)
-check("reward kpi cards built", #TEST.findElements("statscard") == 7, #TEST.findElements("statscard"))
-local rewardsTable = TEST.findByName("rewardsTable")
+check("reward kpi cards built", #elementsOf("statscard") == 7, #elementsOf("statscard"))
+local rewardsTable = byName("rewardsTable")
 check("rewards table filled", rewardsTable and #rewardsTable.rows == 2,
     rewardsTable and #rewardsTable.rows)
-TEST.findByName("rewardsClaim"):fire("click")
+TEST.click(byName("rewardsClaim").id)
 check("claim sent", TEST.lastServerEvent.name == "referral:claimReward",
     TEST.lastServerEvent.name)
 
 --  statistics page
 ReferralClient.navigation.show("statistics")
-check("area chart data", TEST.findByName("chartArea").data ~= nil
-    and #TEST.findByName("chartArea").data == 7)
-check("donut chart data", TEST.findByName("chartDonut").data ~= nil
-    and #TEST.findByName("chartDonut").data == 3)
-check("bar chart data", TEST.findByName("chartBar").data ~= nil
-    and #TEST.findByName("chartBar").data == 7)
+check("area chart data", byName("chartArea").data ~= nil
+    and #byName("chartArea").data == 7)
+check("donut chart data", byName("chartDonut").data ~= nil
+    and #byName("chartDonut").data == 3)
+check("bar chart data", byName("chartBar").data ~= nil
+    and #byName("chartBar").data == 7)
 
 --  conditions page
 ReferralClient.navigation.show("conditions")
-check("stepper created", TEST.findByName("conditionsStepper") ~= nil)
-check("timeline created", TEST.findByName("conditionsTimeline") ~= nil)
-check("accordion created", TEST.findByName("conditionsAccordion") ~= nil)
+check("stepper created", byName("conditionsStepper") ~= nil)
+check("timeline created", byName("conditionsTimeline") ~= nil)
+check("accordion created", byName("conditionsAccordion") ~= nil)
 
 --  back to dashboard
 ReferralClient.navigation.show("dashboard")
-check("dashboard visible again", TEST.findByName("pageDashboard").visible == true)
-check("dashboard data still bound", TEST.findByName("heroCode").text == "RAOUF-X72K")
+check("dashboard visible again", byName("pageDashboard").visible == true)
+check("dashboard data still bound", byName("heroCode").text == "RAOUF-X72K")
 
 --  error state
 triggerClientEvent(localPlayer, "referral:profileData", resourceRoot,
@@ -773,12 +1008,13 @@ check("error state cleared", ReferralClient.main.statusKind == nil)
 
 --  close / reopen
 ReferralClient.main.close()
-check("window hidden", ReferralClient.main.window.visible == false)
+check("window hidden", firstWindow.id ~= nil and TEST.visible(firstWindow.id) == false,
+    tostring(firstWindow.id))
 check("cursor hidden", TEST.cursor == false)
 check("dialogs closed", ReferralClient.dialogs.isOpen("share") == false)
 ReferralClient.main.open()
 check("reopen works", ReferralClient.main.visible == true)
-check("still one window", #TEST.findElements("window") == 1, #TEST.findElements("window"))
+check("still one window", #elementsOf("window") == 1, #elementsOf("window"))
 
 --  command handler
 TEST.commands["referral"]("referral", "close")
@@ -796,109 +1032,118 @@ check("F6 toggles back", ReferralClient.main.visible == true)
 check("export getReferralCode", ReferralClient.main.getReferralCode() == "RAOUF-X72K")
 check("export getReferralStats", ReferralClient.main.getReferralStats().total == 24)
 
---  notification helper (method style, like the real NovaUI v3)
+--  notification goes through the real export, never through a global
 local notificationsBefore = #TEST.notifications
-NovaUI:notify({ type = "success", title = "تم النسخ", message = "تم نسخ كود الاحالة بنجاح" })
+ReferralClient.novaui.notify({ type = "success", title = "تم النسخ", message = "تم نسخ كود الاحالة بنجاح" })
 check("notification fired", #TEST.notifications == notificationsBefore + 1,
     #TEST.notifications)
 
---  REGRESSION: the user's server reported
---  "call: failed to call 'NovaUI:create'" because the bridge called the
---  factory dot style while NovaUI v3 defines it as a method.
+--============================================================--
+--  NOVAUI BRIDGE CONTRACT
+--  These are the checks that would have caught the user's bug.
+--============================================================--
+print("== novaui bridge ==")
+
+--  REGRESSION 1 (the user's actual failure):
+--  MTA's exports table returns a FUNCTION for ANY key, even one the resource
+--  never declared. Indexing it therefore proves nothing, and calling the stub
+--  raises "call: failed to call 'NovaUI:create' [string \"?\"]" - which is
+--  exactly the error the user saw. The bridge must ask
+--  getResourceExportedFunctions() what is really exported.
 ReferralClient.novaui.reset()
-check("method style factory works (user bug)",
-    ReferralClient.novaui.create("window", { title = "probe" }) ~= nil)
-check("factory style detected as method",
+check("exports table hands back a stub for undeclared keys",
+    type(exports.NovaUI.novaCreate) == "function")
+check("bridge does not trust the exports table blindly",
     (function()
-        local ui = ReferralClient.novaui.get()
-        local ok = pcall(ui.create, ui, "label", {})
-        return ok
-    end)())
-
---  the bridge must survive BOTH factory conventions
-ReferralClient.novaui.reset()
-check("bridge auto detects method style",
-    ReferralClient.novaui.create("label", { text = "probe" }) ~= nil)
-ReferralClient.novaui.reset()
-local originalCreate = NovaUI.create
-NovaUI.create = function(kind, props) return originalCreate(NovaUI, kind, props) end
-check("bridge falls back to function style",
-    ReferralClient.novaui.create("label", { text = "probe" }) ~= nil)
-NovaUI.create = originalCreate
-ReferralClient.novaui.reset()
-
---  a build that only accepts a single props table must still work
-ReferralClient.novaui.reset()
-local savedCreate = NovaUI.create
-NovaUI.create = function(self, a, b)
-    if type(a) == "table" then
-        local nova = (type(self) == "table") and self or NovaUI
-        return savedCreate(nova, a.type or "label", a)
-    end
-    error("single table convention only")
-end
-check("single table convention works",
-    ReferralClient.novaui.create("window", { title = "probe" }) ~= nil)
-check("convention remembered",
-    ReferralClient.novaui.create("panel", {}) ~= nil)
-NovaUI.create = savedCreate
-ReferralClient.novaui.reset()
-
---  a build that computes its own z order from props.level and dies when the
---  caller omits it ("attempt to perform arithmetic on field 'level'")
-ReferralClient.novaui.reset()
-local layeringCreate = NovaUI.create
-NovaUI.create = function(self, kind, props)
-    assert(type(self) == "table", "must be called method style")
-    if type(props) ~= "table" or props.level == nil then
-        error("attempt to perform arithmetic on field 'level' (a nil value)")
-    end
-    return layeringCreate(self, kind, props)
-end
-local layeringElement = ReferralClient.novaui.create("window", { title = "probe" })
-check("build missing props.level still gets a window",
-    layeringElement ~= nil and layeringElement.kind == "window",
-    ReferralClient.novaui.diagnose():sub(1, 240))
-local diag2 = ReferralClient.novaui.diagnose()
-check("layering fallback is reported",
-    diag2:find("+ layering props", 1, true) ~= nil, diag2:sub(1, 200))
-NovaUI.create = layeringCreate
-ReferralClient.novaui.reset()
-
---  a factory that always returns nil must fail loudly but never crash
-ReferralClient.novaui.reset()
-NovaUI.create = function() return nil end
-local logBefore = #TEST.log
-local nilResult = ReferralClient.novaui.create("window", {})
-check("nil returning factory is contained", nilResult == nil)
-local logged = ""
-for i = logBefore + 1, #TEST.log do logged = logged .. tostring(TEST.log[i]) end
-check("failure is logged with the reason",
-    logged:find("could not create window", 1, true) ~= nil, logged:sub(1, 160))
-local diag = ReferralClient.novaui.diagnose()
-check("diagnostic shows probe return values",
-    diag:find("probe results", 1, true) ~= nil and diag:find("-> ok nil", 1, true) ~= nil,
-    diag:sub(1, 240))
-check("diagnostic lists exported functions",
-    diag:find("exports=", 1, true) ~= nil)
-NovaUI.create = savedCreate
-ReferralClient.novaui.reset()
-
---  a broken factory must not crash the resource
-local broken = { create = function() error("boom") end }
-ReferralClient.novaui.reset()
-check("broken factory is contained",
-    (function()
-        local saved = NovaUI
-        NovaUI = broken
-        local ui = ReferralClient.novaui.resolve(true)
-        local ok = pcall(function() return ReferralClient.novaui.create("window", {}) end)
-        NovaUI = saved
+        --  a resource that exports nothing NovaUI shaped must not resolve
+        local saved = getResourceExportedFunctions
+        getResourceExportedFunctions = function() return { "someOtherExport" } end
+        local ok = ReferralClient.novaui.resolve(true)
+        getResourceExportedFunctions = saved
         ReferralClient.novaui.reset()
-        return ok == true
-    end)())
-check("diagnostic reports the failure reason",
-    type(ReferralClient.novaui.diagnose()) == "string")
+        return ok == nil
+    end)(), "resolved a resource that exports nothing NovaUI shaped")
+
+--  novaCreate returns an ID, not a component - the bridge must wrap it
+ReferralClient.novaui.reset()
+local window = ReferralClient.novaui.create("window", { title = "probe" })
+check("create returns a handle", window ~= nil and window.id == nil,
+    window and tostring(window.id))
+ReferralClient.novaui.flush()
+check("handle flushed into a real id", window.id ~= nil, tostring(window.id))
+check("window really exists in NovaUI", TEST.component(window.id) ~= nil)
+check("handle reports its kind", window.kind == "window", window.kind)
+
+--  children are created against the parent id
+local panel = ReferralClient.novaui.child(window, "panel", { name = "probePanel" })
+ReferralClient.novaui.flush()
+check("child created", panel ~= nil and panel.id ~= nil, panel and tostring(panel.id))
+check("child attached to its parent",
+    (function()
+        for _, childId in ipairs(TEST.children(window.id)) do
+            if childId == panel.id then return true end
+        end
+        return false
+    end)(), tostring(panel.id))
+
+--  events registered before the flush reach NovaUI as bound props
+ReferralClient.novaui.reset()
+local clicked = 0
+local btn = ReferralClient.novaui.create("button", { text = "اضغط" })
+ReferralClient.novaui.on(btn, "click", function() clicked = clicked + 1 end)
+ReferralClient.novaui.flush()
+check("click prop bound by NovaUI", TEST.props(btn.id).onClick ~= nil)
+TEST.click(btn.id)
+check("click handler fired", clicked == 1, tostring(clicked))
+
+--  an event NovaUI does NOT bind from props still works through novaOn
+ReferralClient.novaui.reset()
+local selected = nil
+local row = ReferralClient.novaui.create("table", { name = "probeTable" })
+ReferralClient.novaui.on(row, "select", function(r) selected = r end)
+ReferralClient.novaui.flush()
+check("select bound through novaOn", TEST.emit(row.id, "select", { id = 7 }))
+check("select handler fired", selected ~= nil and selected.id == 7, tostring(selected))
+
+--  update / patch
+ReferralClient.novaui.patch(row, { rows = { { id = 1 } } })
+ReferralClient.novaui.flush()
+check("patch applied", TEST.props(row.id).rows ~= nil and #TEST.props(row.id).rows == 1,
+    TEST.props(row.id).rows and #TEST.props(row.id).rows)
+
+--  setVisible goes through the dedicated export
+ReferralClient.novaui.call(panel, "setVisible", false)
+check("setVisible applied", TEST.visible(panel.id) == false)
+
+--  setter methods with no dedicated export fall back to novaCall
+ReferralClient.novaui.call(row, "setRows", { { id = 1 }, { id = 2 } })
+check("setRows applied through novaCall", #TEST.props(row.id).data == 2,
+    TEST.props(row.id).data and #TEST.props(row.id).data)
+
+--  a missing NovaUI must degrade, never throw
+ReferralClient.novaui.reset()
+check("missing NovaUI is contained",
+    (function()
+        local savedResolve = getResourceFromName
+        getResourceFromName = function() return nil end
+        local savedResources = getResources
+        getResources = function() return {} end
+        local ok, err = pcall(function()
+            return ReferralClient.novaui.create("window", {})
+        end)
+        getResourceFromName = savedResolve
+        getResources = savedResources
+        ReferralClient.novaui.reset()
+        return ok == true and err == nil
+    end)(), tostring(err))
+
+--  the diagnostic must name the real exported functions
+local diag = ReferralClient.novaui.diagnose()
+check("diagnostic lists real exports",
+    diag:find("novaCreate", 1, true) ~= nil and diag:find("novaOn", 1, true) ~= nil,
+    diag:sub(1, 240))
+check("diagnostic shows probe return values",
+    diag:find("probe results", 1, true) ~= nil, diag:sub(1, 200))
 
 print(string.format("\n  %d checks, %d failures", checks, #failures))
 if #failures > 0 then error("client tests failed: " .. table.concat(failures, ", ")) end

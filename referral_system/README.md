@@ -401,77 +401,100 @@ UI.layout = {
 
 ## 14b. The NovaUI bridge — `client/novaui.lua`
 
-NovaUI is a third party library whose exact calling convention is not fixed here, so
-the resource never assumes one. `client/novaui.lua` is the only file that talks to
-NovaUI; everything else goes through `ReferralClient.novaui`.
+`client/novaui.lua` is the only file that talks to NovaUI; everything else goes
+through `ReferralClient.novaui`.
 
-**How the library is found**
+### Why the dashboard used to fail
 
-1. `getResourceState` / `exports[<name>]` for every name in
-   `ReferralConfig.novaui.resourceNames` (also matched case-insensitively).
-2. A global table (`NovaUI`) as a fallback.
-3. A last resort scan of every running resource whose name contains `nova`.
+Two MTA rules decide how this bridge has to be written:
 
-**How components are created**
+1. **Every resource has its own Lua VM.** A global `NovaUI` table created inside
+   the NovaUI resource is *not* visible from another resource — which is exactly
+   why the old diagnostic printed `global NovaUI: nil`. The only supported way in
+   is the export list NovaUI declares in its `meta.xml`.
+2. **`exports[name].anything` is a function for ANY key** — even one the resource
+   never declared. Indexing the exports table therefore proves nothing, and
+   calling such a stub raises:
 
-`create(kind, props)` tries every exported function name that looks like a factory
-(`create`, `Create`, `new`, `New`, `component`, `element`, `make`, `build`, `add`,
-`createComponent`, `createElement`) against every calling convention:
+   ```
+   ERROR: ... call: failed to call 'NovaUI:create' [string "?"]
+   ```
 
-| Shape | Call |
+   That is the error this resource was hitting: the bridge checked
+   `type(exports.NovaUI.create) == "function"`, which is always true, and then
+   called a `create` export that NovaUI never declared.
+
+So the bridge now asks `getResourceExportedFunctions()` what a resource *really*
+exports, and only calls those.
+
+### NovaUI v3.0.0's real API
+
+| Export | Does |
 |---|---|
-| method + two args | `factory(self, kind, props)` |
-| function + two args | `factory(kind, props)` |
-| method + one table | `factory(self, { type = kind, ... })` |
-| function + one table | `factory({ type = kind, ... })` |
-| method + kind only | `factory(self, kind)` |
-| function + kind only | `factory(kind)` |
+| `novaCreate(typeName, props, parentId)` | creates a component, returns its **id** (a number) or `false` |
+| `novaDestroy(id)` | destroys a component |
+| `novaSetVisible(id, visible)` | show / hide |
+| `novaUpdate(id, props)` | batch update (`x`, `y`, `width`, `height`, `visible`, `disabled`, `enabled`, `alpha`, `value`, `text`) |
+| `novaCall(id, method, ...)` | call any method (`setData`, `setFilter`, `sortBy`, `bringToFront`, …) |
+| `novaOn` / `novaOnce` / `novaOff` | event listeners |
+| `novaAnimate` / `novaGetValue` / `novaSetText` | animation, value, text |
+| `novaNotify(options)` / `novaConfirm(options)` | toasts and modals |
+| `novaSetTheme` / `novaCreateTheme` / `novaScale` | theming and scaling |
 
-Method style is always tried first, because MTA reports a failed pcall's name from
-the debug info — a colon in `NovaUI:create` means the library defines a method, and
-calling it dot-style shifts every argument by one.
+NovaUI also binds event handlers passed as props
+(`onClick`, `onChange`, `onHover`, `onFocus`, `onBlur`, `onClose`, `onSubmit`),
+so a listener registered right after `UI.button(...)` is handed over as a prop.
 
-The first convention that returns a table or userdata is remembered and reused, so
-the probing cost is paid once. If the remembered convention stops working it is
-dropped and the probing runs again.
+### Handles
 
-**The layering fallback**
+`novaCreate` returns an **id**, not a component, so the bridge wraps every id in a
+*handle*: a stable object that remembers the props it was built from, its parent
+and its children. Code keeps the handle; the id inside it may change when the
+component is rebuilt, so a reference never goes stale.
 
-If no convention returns a component, the props are replayed one more time with the
-usual layering fields filled in (`level`, `zIndex`, `z`, `depth`, `layer`,
-`elevation`, all defaulting to `1`). This covers the build that derives a
-component's z order from a property it was never given and therefore dies inside
-the library with:
+A handle is only turned into a real component when it is **flushed**. That is what
+makes `N.on()` work — the listener is recorded first and replayed either as a prop
+NovaUI binds itself, or through `novaOn` for events it does not auto-bind
+(`select`, `sort`, `minimize`, `doubleClick`). Every build path calls `N.flush()`
+when it is done, and an `onClientRender` safety net catches anything assembled
+elsewhere (dialogs).
 
-```
-attempt to perform arithmetic on field 'level' (a nil value)
-```
+### Updates
 
-That error is raised **inside** NovaUI, not in this resource. When the fallback is
-what saved the call, the diagnostic prints `factory in use : create / method(kind,
-props) + layering props`, so you can move the value into `client/ui.lua` and drop
-the fallback later.
+`novaUpdate` only understands the properties listed above. `rows`, `data`,
+`columns`, `filter`, `chartType` and `icon` are read when a component is *created*,
+so patching those rebuilds the component in place from merged props. A rebuild is
+refused for a component that already has children (it would destroy them), and the
+diagnostic says so.
 
-**Optional setup hook**
+### Resolution order
 
-Some NovaUI builds must be initialised before any component can be created — an
-uninitialised build fails *inside* the library with
-`attempt to perform arithmetic on field 'level'`. Set the real function name here and
-it is called once, method style first then dot style:
+1. `exports.<name>` of a **running** resource that declares NovaUI's exports.
+2. A global `NovaUI` table (only reachable inside NovaUI's own VM, kept as a
+   fallback for builds that publish one).
+3. `exports.<name>` of any such resource.
+4. A last resort scan of running resources whose name contains `nova`.
 
-```lua
-ReferralConfig.novaui.initFunction = "init"   -- "setup", "start", "load", "boot" ...
-```
+The winning resource, the real export list of every candidate and a live probe of
+`novaCreate` are all printed by `/referral debug`.
 
-Leave it empty and nothing extra is ever called.
+### Required change to NovaUI itself
 
-**`/referral debug`**
+Stock NovaUI v3.0.0 exports only 8 functions — none of them `novaOn`,
+`novaUpdate`, `novaCall`, `novaAnimate`, `novaGetValue` or `novaSetText`. Without
+those, a resource in another VM can create components but can never attach a
+`select`/`sort` listener or update a table's rows, so an interactive dashboard is
+impossible.
 
-Prints the resolved resource, every candidate with its state and exported function
-names, the global keys, the configured `initFunction`, and then a live probe of
-`create` for `window`, `panel` and `label` **showing what each call actually
-returns** (or the exact error). That output is the fastest way to find out what the
-installed NovaUI build really exposes.
+`NovaUI.zip` in the repository root is therefore a **patched** NovaUI: the same
+library plus those six exports in `client/core/bootstrap.lua` and their
+`<export>` tags in `meta.xml`. Replace your `NovaUI` folder with the contents of
+that zip (or add the six functions and tags by hand — they are ~40 lines).
+
+The bridge degrades gracefully without them: it falls back to rebuilding
+components from props and skips animations, so the dashboard still opens.
+
+---
 
 ---
 
@@ -483,7 +506,9 @@ mocked NovaUI APIs:
 ```bash
 python3 tools/check_lua.py      # syntax + unknown globals + asset paths + events + font coverage
 python3 tools/verify.py         # static verification
-python3 tools/test_resource.py  # executes the resource: 132 assertions
+python3 tools/fetch_nova.py    # unpack NovaUI.zip into tools/_nova
+python3 tools/integration_nova.py  # run the resource against the REAL NovaUI
+python3 tools/test_resource.py  # executes the resource: 89 client + 54 server assertions
 ```
 
 The execution suite covers: code generation, valid/invalid code, self referral,
@@ -503,7 +528,9 @@ broken factory, and a build that requires a `level` property the caller never se
 | Resource will not start | NovaUI is missing or named differently → see step 2 |
 | "تعذر العثور على واجهة NovaUI" | start NovaUI, or fix `resourceNames` / `<include>` |
 | "تعذر انشاء النافذة" / `could not create window` | NovaUI was found but its `create` returned nil or raised an error. Run `/referral debug` and read the probe results — they show the real exported names and the exact error |
-| `attempt to perform arithmetic on field 'level'` | This error is raised **inside** NovaUI, not in this resource. The library is either not initialised yet or its factory expects another signature → try `ReferralConfig.novaui.initFunction`, then re-run `/referral debug` |
+| `call: failed to call 'NovaUI:create' [string "?"]` | MTA hands back a stub function for any key on the exports table. The bridge now checks `getResourceExportedFunctions()` instead — make sure NovaUI is running and is the resource named in `resourceNames` |
+| `global NovaUI: nil` in the debug output | Expected: every resource has its own Lua VM. The bridge reaches NovaUI through its exports, not through a global |
+| Dashboard opens but rows/selection do not react | NovaUI is missing the `novaOn` / `novaCall` / `novaUpdate` exports → use the patched `NovaUI.zip` from the repository root |
 | Dashboard opens but stays empty | the probe shows `create` returning a table, so the factory is fine — check the server console for the data fetch instead |
 | "تعذر تحميل بيانات الاحالة" | server side error, check the server console; the UI offers a retry button |
 | No data persists | `ReferralConfig.storage.backend` fell back to `memory` (sqlite module missing) |

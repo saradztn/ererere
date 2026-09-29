@@ -273,7 +273,7 @@ end
 --  DATA BINDING
 --============================================================--
 function PAGE.onData(panel, data)
-    if not panel or not isElement(panel) then return end
+    if not panel or not N.isElement(panel) then return end
     if type(data) ~= "table" or not data.stats then return end
 
     local stats = data.stats

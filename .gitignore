@@ -1,3 +1,7 @@
 __pycache__/
 *.pyc
 .arena/
+
+#  unpacked from NovaUI.zip for the integration test (regenerate with
+#  python3 tools/fetch_nova.py - only the zip itself is committed)
+tools/_nova/

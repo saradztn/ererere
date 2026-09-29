@@ -152,7 +152,7 @@ function PAGE.build(parent)
 end
 
 function PAGE.onData(panel, data)
-    if not panel or not isElement(panel) then return end
+    if not panel or not N.isElement(panel) then return end
     --  the conditions page is static configuration, it only needs
     --  the current progress of the player to highlight the step
     if not refs.stepper or type(data) ~= "table" or not data.stats then return end

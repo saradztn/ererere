@@ -25,17 +25,16 @@ ReferralConfig.debug              = false      -- verbose outputDebugString
 --  folder is named differently, change BOTH the <include> tag in
 --  meta.xml and the first entry of this list.
 --============================================================--
+--  Every resource has its own Lua VM, so NovaUI's global table is unreachable
+--  from here: the bridge talks to it through the exports NovaUI declares in its
+--  meta.xml (novaCreate, novaDestroy, novaSetVisible, novaUpdate, novaCall,
+--  novaOn, novaNotify, ...). `resourceNames` is what the bridge looks for.
+--  NovaUI v3.0.0 must be the PATCHED build shipped in NovaUI.zip, otherwise
+--  novaOn/novaCall/novaUpdate/novaAnimate do not exist and the dashboard loses
+--  row selection, table updates and animations.
 ReferralConfig.novaui = {
     resourceNames = { "NovaUI", "novaui", "nova_ui", "nova-ui", "NovaUIv3", "nova" },
     font          = "assets/fonts/arabic.ttf",
-
-    --  Some NovaUI builds need a one-shot setup call before any component can
-    --  be created (an uninitialised build fails inside the library with
-    --  "attempt to perform arithmetic on field 'level'").
-    --  Run `/referral debug`, look at the exported function names, then set the
-    --  real one here - e.g. "init", "setup", "start", "load", "boot".
-    --  Leave it empty and nothing is called automatically.
-    initFunction  = "",
 }
 
 --============================================================--

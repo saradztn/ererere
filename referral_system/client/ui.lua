@@ -297,7 +297,7 @@ function UI.flashIcon(element, fromIcon, toIcon, duration)
     if not element then return end
     N.patch(element, { icon = toIcon })
     setTimer(function()
-        if isElement(element) then
+        if N.isElement(element) then
             N.patch(element, { icon = fromIcon })
         end
     end, duration or 1600, 1)

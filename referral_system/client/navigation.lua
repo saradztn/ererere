@@ -169,11 +169,12 @@ local function ensureBuilt(key)
         end
         if page.subscribe ~= false then
             ReferralClient.state.subscribe(key, function(data)
-                if page.panel and isElement(page.panel) and type(page.onData) == "function" then
+                if page.panel and N.isElement(page.panel) and type(page.onData) == "function" then
                     pcall(page.onData, page.panel, data)
                 end
             end)
         end
+        N.flush()
     end
     return page
 end
@@ -188,7 +189,7 @@ function NAV.show(key)
 
     --  hide every other page (retained components, no rebuild)
     for otherKey, other in pairs(NAV.pages) do
-        if other.panel and isElement(other.panel) and otherKey ~= key then
+        if other.panel and N.isElement(other.panel) and otherKey ~= key then
             N.call(other.panel, "setVisible", false)
         end
     end
@@ -196,6 +197,7 @@ function NAV.show(key)
     N.call(page.panel, "setVisible", true)
     N.call(page.panel, "bringToFront")
     UI.fadeIn(page.panel, 0)
+    N.flush()
 
     NAV.active = key
 

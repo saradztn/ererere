@@ -101,6 +101,7 @@ function M.build()
     end)
 
     M.built = true
+    N.flush()
 
     --  first page
     NAV.show("dashboard")
@@ -127,6 +128,7 @@ function M.buildOverlay()
         N.call(M.overlayLoading, "setVisible", false)
         N.call(M.overlayError, "setVisible", false)
     end
+    N.flush()
 end
 
 function M.setStatus(kind)
@@ -213,6 +215,17 @@ end
 --============================================================--
 function M.init()
     ST.init()
+
+    --  Safety net: handles are created as soon as they are needed (N.child,
+    --  setVisible, ...) and every build path flushes explicitly, but a block
+    --  assembled outside those paths still has to reach NovaUI. One frame of
+    --  latency is invisible and keeps NovaUI's "never create in onClientRender"
+    --  rule intact - this runs once per pending handle, not every frame.
+    addEventHandler("onClientRender", root, function()
+        if #ReferralClient.novaui.pending() > 0 then
+            N.flush()
+        end
+    end)
 
     --  keybind
     if ReferralConfig.ui.openKey and ReferralConfig.ui.openKey ~= "" then

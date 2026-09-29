@@ -109,6 +109,9 @@ function D.openShare()
 
     N.on(dialog, "close", function() D.close("share") end)
     UI.fadeIn(dialog, 0)
+    --  the dialog and everything inside it only reach NovaUI here, so the
+    --  listeners registered above are already part of the props
+    N.flush()
     return dialog
 end
 
@@ -195,6 +198,9 @@ function D.openApplyCode()
     N.on(dialog, "close", function() D.close("apply") end)
     if edit then N.call(edit, "focus") end
     UI.fadeIn(dialog, 0)
+    --  the dialog and everything inside it only reach NovaUI here, so the
+    --  listeners registered above are already part of the props
+    N.flush()
     return dialog
 end
 
@@ -274,6 +280,9 @@ function D.openDetail(referral)
 
     N.on(dialog, "close", function() D.close("detail") end)
     UI.fadeIn(dialog, 0)
+    --  the dialog and everything inside it only reach NovaUI here, so the
+    --  listeners registered above are already part of the props
+    N.flush()
     return dialog
 end
 
