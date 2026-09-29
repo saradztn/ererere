@@ -435,6 +435,23 @@ The first convention that returns a table or userdata is remembered and reused, 
 the probing cost is paid once. If the remembered convention stops working it is
 dropped and the probing runs again.
 
+**The layering fallback**
+
+If no convention returns a component, the props are replayed one more time with the
+usual layering fields filled in (`level`, `zIndex`, `z`, `depth`, `layer`,
+`elevation`, all defaulting to `1`). This covers the build that derives a
+component's z order from a property it was never given and therefore dies inside
+the library with:
+
+```
+attempt to perform arithmetic on field 'level' (a nil value)
+```
+
+That error is raised **inside** NovaUI, not in this resource. When the fallback is
+what saved the call, the diagnostic prints `factory in use : create / method(kind,
+props) + layering props`, so you can move the value into `client/ui.lua` and drop
+the fallback later.
+
 **Optional setup hook**
 
 Some NovaUI builds must be initialised before any component can be created — an
@@ -466,7 +483,7 @@ mocked NovaUI APIs:
 ```bash
 python3 tools/check_lua.py      # syntax + unknown globals + asset paths + events + font coverage
 python3 tools/verify.py         # static verification
-python3 tools/test_resource.py  # executes the resource: 130 assertions
+python3 tools/test_resource.py  # executes the resource: 132 assertions
 ```
 
 The execution suite covers: code generation, valid/invalid code, self referral,
@@ -475,7 +492,7 @@ milestones, claims, double claims, owner limits, chart data, SQLite statements,
 window open/close, no duplicate windows, F6, command, navigation, breadcrumb,
 search, filtering, sorting, empty/loading/error states, share/copy clipboard,
 apply-code flow, all exports, and every NovaUI calling convention (method style, function style, single-props-table, a nil-returning factory and a
-broken factory).
+broken factory, and a build that requires a `level` property the caller never sent).
 
 ---
 

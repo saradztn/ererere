@@ -844,6 +844,27 @@ check("convention remembered",
 NovaUI.create = savedCreate
 ReferralClient.novaui.reset()
 
+--  a build that computes its own z order from props.level and dies when the
+--  caller omits it ("attempt to perform arithmetic on field 'level'")
+ReferralClient.novaui.reset()
+local layeringCreate = NovaUI.create
+NovaUI.create = function(self, kind, props)
+    assert(type(self) == "table", "must be called method style")
+    if type(props) ~= "table" or props.level == nil then
+        error("attempt to perform arithmetic on field 'level' (a nil value)")
+    end
+    return layeringCreate(self, kind, props)
+end
+local layeringElement = ReferralClient.novaui.create("window", { title = "probe" })
+check("build missing props.level still gets a window",
+    layeringElement ~= nil and layeringElement.kind == "window",
+    ReferralClient.novaui.diagnose():sub(1, 240))
+local diag2 = ReferralClient.novaui.diagnose()
+check("layering fallback is reported",
+    diag2:find("+ layering props", 1, true) ~= nil, diag2:sub(1, 200))
+NovaUI.create = layeringCreate
+ReferralClient.novaui.reset()
+
 --  a factory that always returns nil must fail loudly but never crash
 ReferralClient.novaui.reset()
 NovaUI.create = function() return nil end

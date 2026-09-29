@@ -215,7 +215,8 @@ function N.diagnose()
     lines[#lines + 1] = "novaUI resolved : " .. tostring(ui ~= nil)
     lines[#lines + 1] = "novaUI source   : " .. tostring(resolvedName or "none")
     lines[#lines + 1] = "factory in use  : "
-        .. (factory and (tostring(factory.name) .. " / " .. tostring(factory.shape)) or "not resolved yet")
+        .. (factory and (tostring(factory.name) .. " / " .. tostring(factory.shape)
+            .. (factory.layering and " + layering props" or "")) or "not resolved yet")
     lines[#lines + 1] = "initFunction    : "
         .. tostring(ReferralConfig.novaui.initFunction or "not set (no setup hook called)")
 
@@ -287,6 +288,44 @@ local function isUsable(value)
     return kind == "table" or kind == "userdata"
 end
 
+--  Some NovaUI builds derive a component's z order from a property they were
+--  never given: create("window", { x = ... }) then dies inside the library with
+--  "attempt to perform arithmetic on field 'level' (a nil value)". Those builds
+--  are the reason the last resort below exists - the props are replayed with the
+--  usual layering fields filled in.
+local LAYERING_FIELDS = {
+    { key = "level", value = 1 }, { key = "zIndex", value = 1 }, { key = "z", value = 1 },
+    { key = "depth", value = 1 }, { key = "layer", value = 1 }, { key = "elevation", value = 1 },
+}
+
+---Copy props, adding the type aliases and any layering field that is missing.
+local function withDefaults(props, kind, layering)
+    local merged = {}
+    for key, value in pairs(props) do merged[key] = value end
+    if kind then
+        merged.type, merged.component = kind, kind
+    end
+    if layering then
+        for _, field in ipairs(LAYERING_FIELDS) do
+            if merged[field.key] == nil then merged[field.key] = field.value end
+        end
+    end
+    return merged
+end
+
+---Every calling shape this bridge knows, as argument builders.
+---Each returns the argument list for `fn(...)`.
+local function buildShapes()
+    return {
+        { name = "method(kind, props)", args = function(o, k, p) return o, k, p end },
+        { name = "function(kind, props)", args = function(o, k, p) return k, p end },
+        { name = "method(props)", args = function(o, k, p) return o, withDefaults(p, k) end },
+        { name = "function(props)", args = function(o, k, p) return withDefaults(p, k) end },
+        { name = "method(kind)", args = function(o, k, p) return o, k end },
+        { name = "function(kind)", args = function(o, k, p) return k end },
+    }
+end
+
 ---Try every plausible calling shape until one returns a component.
 ---@return any element, string error
 local function callFactory(owner, kind, props)
@@ -297,34 +336,34 @@ local function callFactory(owner, kind, props)
         for _, key in ipairs(FACTORY_KEYS) do keys[#keys + 1] = key end
     end
 
-    local shapes = {
-        { name = "method(kind, props)", run = function(fn)
-            return fn(owner, kind, props)
-        end },
-        { name = "function(kind, props)", run = function(fn)
-            return fn(kind, props)
-        end },
-        { name = "method(props)", run = function(fn)
-            local merged = {}
-            for key, value in pairs(props) do merged[key] = value end
-            merged.type, merged.component = kind, kind
-            return fn(owner, merged)
-        end },
-        { name = "function(props)", run = function(fn)
-            local merged = {}
-            for key, value in pairs(props) do merged[key] = value end
-            merged.type, merged.component = kind, kind
-            return fn(merged)
-        end },
-        { name = "method(kind)", run = function(fn)
-            return fn(owner, kind)
-        end },
-        { name = "function(kind)", run = function(fn)
-            return fn(kind)
-        end },
-    }
-
+    local shapes = buildShapes()
     local firstError
+    local lastResort = false
+
+    --  one pass over every key/shape pair; the layering pass only runs if the
+    --  first pass found nothing, so the common case stays a single attempt
+    local function attempt(layering)
+        for _, key in ipairs(keys) do
+            local fn = owner[key]
+            if type(fn) == "function" then
+                for _, shape in ipairs(shapes) do
+                    local arguments = { shape.args(owner, kind, layering and withDefaults(props, kind, true) or props) }
+                    local ok, result = pcall(fn, unpack(arguments))
+                    if ok and isUsable(result) then
+                        factory = { name = key, shape = shape.name,
+                                    layering = layering or nil }
+                        Referral.log("NovaUI factory resolved:", key, shape.name,
+                            layering and "(with layering props)" or "")
+                        return result
+                    end
+                    if not ok and not firstError then
+                        firstError = tostring(result):sub(1, 120)
+                    end
+                end
+            end
+        end
+        return nil
+    end
 
     --  fast path: a working convention is already known
     if factory and factory.name and factory.shape then
@@ -332,7 +371,8 @@ local function callFactory(owner, kind, props)
         if type(fn) == "function" then
             for _, shape in ipairs(shapes) do
                 if shape.name == factory.shape then
-                    local ok, result = pcall(shape.run, fn)
+                    local arguments = { shape.args(owner, kind, props) }
+                    local ok, result = pcall(fn, unpack(arguments))
                     if ok and isUsable(result) then return result end
                     if not ok and not firstError then
                         firstError = tostring(result):sub(1, 120)
@@ -345,23 +385,16 @@ local function callFactory(owner, kind, props)
         factory = nil
     end
 
-    --  probe every key/shape pair until one hands back a component
-    for _, key in ipairs(keys) do
-        local fn = owner[key]
-        if type(fn) == "function" then
-            for _, shape in ipairs(shapes) do
-                local ok, result = pcall(shape.run, fn)
-                if ok and isUsable(result) then
-                    factory = { name = key, shape = shape.name }
-                    Referral.log("NovaUI factory resolved:", key, shape.name)
-                    return result
-                end
-                if not ok and not firstError then
-                    firstError = tostring(result):sub(1, 120)
-                end
-            end
-        end
-    end
+    local element = attempt(false)
+    if element then return element end
+
+    --  nothing worked: the build may simply be missing the layering fields it
+    --  reads internally. Replay the props with them filled in.
+    lastResort = true
+    element = attempt(true)
+    if element then return element end
+    lastResort = false
+
     return nil, firstError or "every calling convention returned nil"
 end
 
