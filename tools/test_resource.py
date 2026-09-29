@@ -307,12 +307,21 @@ function ElementMeta:setItems(items) self.items = items return self end
 function ElementMeta:setFilter(q) self.filter = q return self end
 function ElementMeta:setSort(key, desc) self.sortKey, self.sortDesc = key, desc return self end
 
+--  NovaUI v3 exposes the factory as a METHOD (self first), which is what
+--  MTA reports as 'NovaUI:create' when a call fails.
 NovaUI = {}
-function NovaUI.create(kind, props) return newElement(kind, props, nil) end
-function NovaUI.notify(props) TEST.notifications[#TEST.notifications + 1] = props end
-function NovaUI.animate(el, props) if el then el.animated = props end end
-function NovaUI.setFont(path) TEST.font = path end
-function NovaUI.useFont(path) TEST.font = TEST.font or path end
+function NovaUI:create(kind, props)
+    --  the real NovaUI v3 factory is a METHOD: calling it dot style passes
+    --  the component type as `self` and blows up inside the library.
+    assert(type(self) == "table", "create must be called as NovaUI:create(kind, props)")
+    assert(type(kind) == "string", "create expects a component type string")
+    return newElement(kind, props, nil)
+end
+function NovaUI:notify(props) TEST.notifications[#TEST.notifications + 1] = props end
+function NovaUI:animate(el, props) if el then el.animated = props end end
+function NovaUI:setFont(path) TEST.font = path end
+function NovaUI:useFont(path) TEST.font = TEST.font or path end
+function NovaUI:helperProbe() return "ok" end
 
 function TEST.findElements(kind)
     local out = {}
@@ -782,11 +791,52 @@ check("F6 toggles back", ReferralClient.main.visible == true)
 check("export getReferralCode", ReferralClient.main.getReferralCode() == "RAOUF-X72K")
 check("export getReferralStats", ReferralClient.main.getReferralStats().total == 24)
 
---  notification helper
+--  notification helper (method style, like the real NovaUI v3)
 local notificationsBefore = #TEST.notifications
-NovaUI.notify({ type = "success", title = "تم النسخ", message = "تم نسخ كود الاحالة بنجاح" })
+NovaUI:notify({ type = "success", title = "تم النسخ", message = "تم نسخ كود الاحالة بنجاح" })
 check("notification fired", #TEST.notifications == notificationsBefore + 1,
     #TEST.notifications)
+
+--  REGRESSION: the user's server reported
+--  "call: failed to call 'NovaUI:create'" because the bridge called the
+--  factory dot style while NovaUI v3 defines it as a method.
+ReferralClient.novaui.reset()
+check("method style factory works (user bug)",
+    ReferralClient.novaui.create("window", { title = "probe" }) ~= nil)
+check("factory style detected as method",
+    (function()
+        local ui = ReferralClient.novaui.get()
+        local ok = pcall(ui.create, ui, "label", {})
+        return ok
+    end)())
+
+--  the bridge must survive BOTH factory conventions
+ReferralClient.novaui.reset()
+check("bridge auto detects method style",
+    ReferralClient.novaui.create("label", { text = "probe" }) ~= nil)
+ReferralClient.novaui.reset()
+local originalCreate = NovaUI.create
+NovaUI.create = function(kind, props) return originalCreate(NovaUI, kind, props) end
+check("bridge falls back to function style",
+    ReferralClient.novaui.create("label", { text = "probe" }) ~= nil)
+NovaUI.create = originalCreate
+ReferralClient.novaui.reset()
+
+--  a broken factory must not crash the resource
+local broken = { create = function() error("boom") end }
+ReferralClient.novaui.reset()
+check("broken factory is contained",
+    (function()
+        local saved = NovaUI
+        NovaUI = broken
+        local ui = ReferralClient.novaui.resolve(true)
+        local ok = pcall(function() return ReferralClient.novaui.create("window", {}) end)
+        NovaUI = saved
+        ReferralClient.novaui.reset()
+        return ok == true
+    end)())
+check("diagnostic reports the failure reason",
+    type(ReferralClient.novaui.diagnose()) == "string")
 
 print(string.format("\n  %d checks, %d failures", checks, #failures))
 if #failures > 0 then error("client tests failed: " .. table.concat(failures, ", ")) end

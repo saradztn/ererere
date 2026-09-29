@@ -230,6 +230,11 @@ function M.init()
             M.close()
         elseif argument == "toggle" then
             M.toggle()
+        elseif argument == "debug" or argument == "diag" then
+            --  print the NovaUI wiring so a broken install is obvious
+            local report = N.diagnose()
+            outputDebugString("[REFERRAL] diagnostic:\n" .. report, 2)
+            outputChatBox("#60A5FA[نظام الاحالة] #FFFFFFتم طباعة تشخيص NovaUI في كونسول السيرفر (F8)", 255, 255, 255, true)
         else
             M.open()
         end

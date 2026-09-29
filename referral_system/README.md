@@ -48,10 +48,23 @@ application layer: referral logic, validation, storage and page composition.
    }
    ```
 
-   The client resolves NovaUI through the global table first, then through the
-   `exports` of each candidate resource, so a differently named build still works
-   without code changes. If NovaUI cannot be found the resource does **not** crash —
-   it prints a chat message and refuses to open the dashboard.
+   The client resolves NovaUI through the `exports` of a **running** resource first,
+   then through a global `NovaUI` table, then through the exports of any candidate,
+   so a differently named build still works without code changes. If NovaUI cannot
+   be found the resource does **not** crash — it prints a chat message and refuses
+   to open the dashboard.
+
+   > **Calling convention.** NovaUI v3 declares its factory as a *method*
+   > (`NovaUI:create("window", {...})`), which is why MTA reports a broken call as
+   > `failed to call 'NovaUI:create'`. `client/novaui.lua` probes **both**
+   > conventions (`NovaUI:create(...)` and `NovaUI.create(...)`) and remembers the
+   > one that works, so either build is supported. The same applies to element
+   > factories (`window:create("panel", {...})`).
+
+   If the dashboard will not open, run `/referral debug` and read the server
+   console: it prints the resolved source, the state of every candidate resource,
+   whether `exports` expose a `create` function, whether a global `NovaUI` table
+   exists, and the result of a live probe with both calling conventions.
 
 3. Add it to the server config (or start it manually):
 
@@ -72,6 +85,7 @@ application layer: referral logic, validation, storage and page composition.
 | `/referral` | open |
 | `/referral close` | close |
 | `/referral toggle` | toggle |
+| `/referral debug` | print the NovaUI wiring + a live factory probe to the server console (F8) |
 
 ---
 
@@ -327,6 +341,9 @@ triggerServerEvent("referral:reportLevel", resourceRoot, level)
 ---
 
 ## 12. Exports
+
+> Export names are prefixed with the **actual resource folder name**. If you rename
+> `referral_system` to `referral`, call `exports.referral:open()`.
 
 Client:
 
