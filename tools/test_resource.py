@@ -128,6 +128,11 @@ localPlayer = { __player = true, elementType = "player", name = "localPlayer", s
 function getResourceFromName(name) return { __resource = true, name = name } end
 function getResourceName(res) return type(res) == "table" and res.name or "" end
 function getResourceState(res) return "running" end
+function getResources() return { getResourceFromName("NovaUI") } end
+function getResourceExportedFunctions(res)
+    TEST.exports = TEST.exports or {}
+    return TEST.exports[getResourceName(res)] or { "create", "notify", "animate", "setFont" }
+end
 function get(key)
     local v = TEST.settings and TEST.settings[key]
     return v
@@ -820,6 +825,42 @@ NovaUI.create = function(kind, props) return originalCreate(NovaUI, kind, props)
 check("bridge falls back to function style",
     ReferralClient.novaui.create("label", { text = "probe" }) ~= nil)
 NovaUI.create = originalCreate
+ReferralClient.novaui.reset()
+
+--  a build that only accepts a single props table must still work
+ReferralClient.novaui.reset()
+local savedCreate = NovaUI.create
+NovaUI.create = function(self, a, b)
+    if type(a) == "table" then
+        local nova = (type(self) == "table") and self or NovaUI
+        return savedCreate(nova, a.type or "label", a)
+    end
+    error("single table convention only")
+end
+check("single table convention works",
+    ReferralClient.novaui.create("window", { title = "probe" }) ~= nil)
+check("convention remembered",
+    ReferralClient.novaui.create("panel", {}) ~= nil)
+NovaUI.create = savedCreate
+ReferralClient.novaui.reset()
+
+--  a factory that always returns nil must fail loudly but never crash
+ReferralClient.novaui.reset()
+NovaUI.create = function() return nil end
+local logBefore = #TEST.log
+local nilResult = ReferralClient.novaui.create("window", {})
+check("nil returning factory is contained", nilResult == nil)
+local logged = ""
+for i = logBefore + 1, #TEST.log do logged = logged .. tostring(TEST.log[i]) end
+check("failure is logged with the reason",
+    logged:find("could not create window", 1, true) ~= nil, logged:sub(1, 160))
+local diag = ReferralClient.novaui.diagnose()
+check("diagnostic shows probe return values",
+    diag:find("probe results", 1, true) ~= nil and diag:find("-> ok nil", 1, true) ~= nil,
+    diag:sub(1, 240))
+check("diagnostic lists exported functions",
+    diag:find("exports=", 1, true) ~= nil)
+NovaUI.create = savedCreate
 ReferralClient.novaui.reset()
 
 --  a broken factory must not crash the resource

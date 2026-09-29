@@ -399,6 +399,65 @@ UI.layout = {
 
 ---
 
+## 14b. The NovaUI bridge — `client/novaui.lua`
+
+NovaUI is a third party library whose exact calling convention is not fixed here, so
+the resource never assumes one. `client/novaui.lua` is the only file that talks to
+NovaUI; everything else goes through `ReferralClient.novaui`.
+
+**How the library is found**
+
+1. `getResourceState` / `exports[<name>]` for every name in
+   `ReferralConfig.novaui.resourceNames` (also matched case-insensitively).
+2. A global table (`NovaUI`) as a fallback.
+3. A last resort scan of every running resource whose name contains `nova`.
+
+**How components are created**
+
+`create(kind, props)` tries every exported function name that looks like a factory
+(`create`, `Create`, `new`, `New`, `component`, `element`, `make`, `build`, `add`,
+`createComponent`, `createElement`) against every calling convention:
+
+| Shape | Call |
+|---|---|
+| method + two args | `factory(self, kind, props)` |
+| function + two args | `factory(kind, props)` |
+| method + one table | `factory(self, { type = kind, ... })` |
+| function + one table | `factory({ type = kind, ... })` |
+| method + kind only | `factory(self, kind)` |
+| function + kind only | `factory(kind)` |
+
+Method style is always tried first, because MTA reports a failed pcall's name from
+the debug info — a colon in `NovaUI:create` means the library defines a method, and
+calling it dot-style shifts every argument by one.
+
+The first convention that returns a table or userdata is remembered and reused, so
+the probing cost is paid once. If the remembered convention stops working it is
+dropped and the probing runs again.
+
+**Optional setup hook**
+
+Some NovaUI builds must be initialised before any component can be created — an
+uninitialised build fails *inside* the library with
+`attempt to perform arithmetic on field 'level'`. Set the real function name here and
+it is called once, method style first then dot style:
+
+```lua
+ReferralConfig.novaui.initFunction = "init"   -- "setup", "start", "load", "boot" ...
+```
+
+Leave it empty and nothing extra is ever called.
+
+**`/referral debug`**
+
+Prints the resolved resource, every candidate with its state and exported function
+names, the global keys, the configured `initFunction`, and then a live probe of
+`create` for `window`, `panel` and `label` **showing what each call actually
+returns** (or the exact error). That output is the fastest way to find out what the
+installed NovaUI build really exposes.
+
+---
+
 ## 15. Testing
 
 Two dev tools (outside the resource) run the real Lua code against mocked MTA and
@@ -407,7 +466,7 @@ mocked NovaUI APIs:
 ```bash
 python3 tools/check_lua.py      # syntax + unknown globals + asset paths + events + font coverage
 python3 tools/verify.py         # static verification
-python3 tools/test_resource.py  # executes the resource: 118 assertions
+python3 tools/test_resource.py  # executes the resource: 130 assertions
 ```
 
 The execution suite covers: code generation, valid/invalid code, self referral,
@@ -415,7 +474,8 @@ duplicate referral, cooldown, rate limiting, requirement gating, reward payout,
 milestones, claims, double claims, owner limits, chart data, SQLite statements,
 window open/close, no duplicate windows, F6, command, navigation, breadcrumb,
 search, filtering, sorting, empty/loading/error states, share/copy clipboard,
-apply-code flow and all exports.
+apply-code flow, all exports, and every NovaUI calling convention (method style, function style, single-props-table, a nil-returning factory and a
+broken factory).
 
 ---
 
@@ -425,6 +485,9 @@ apply-code flow and all exports.
 |---|---|
 | Resource will not start | NovaUI is missing or named differently → see step 2 |
 | "تعذر العثور على واجهة NovaUI" | start NovaUI, or fix `resourceNames` / `<include>` |
+| "تعذر انشاء النافذة" / `could not create window` | NovaUI was found but its `create` returned nil or raised an error. Run `/referral debug` and read the probe results — they show the real exported names and the exact error |
+| `attempt to perform arithmetic on field 'level'` | This error is raised **inside** NovaUI, not in this resource. The library is either not initialised yet or its factory expects another signature → try `ReferralConfig.novaui.initFunction`, then re-run `/referral debug` |
+| Dashboard opens but stays empty | the probe shows `create` returning a table, so the factory is fine — check the server console for the data fetch instead |
 | "تعذر تحميل بيانات الاحالة" | server side error, check the server console; the UI offers a retry button |
 | No data persists | `ReferralConfig.storage.backend` fell back to `memory` (sqlite module missing) |
 | Icons look wrong | replace the PNG in `assets/icons/` keeping transparency |

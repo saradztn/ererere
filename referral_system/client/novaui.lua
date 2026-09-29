@@ -9,24 +9,33 @@
 --    * degrades gracefully (chat message) when NovaUI is absent
 --  Every pixel is still drawn by NovaUI.
 --
---  NovaUI exposes its factory in one of two shapes depending on the
---  build:
---      NovaUI:create("window", {...})   -- method style (self first)
---      NovaUI.create("window", {...})   -- function style
---  Both are tried automatically, and the convention that works is
---  remembered so the resource never pays for the probe twice.
+--  NovaUI builds differ in how the factory is published, so this bridge
+--  probes (once) every plausible shape and remembers the winner:
+--
+--      NovaUI:create("window", {...})    method style
+--      NovaUI.create("window", {...})    function style
+--      NovaUI:create({ type = "window", ... })
+--      exports.SomeName:create(...)
+--
+--  Run `/referral debug` to see exactly what was found and what every
+--  probe returned.
 --========================================================--
 
 ReferralClient = ReferralClient or {}
 local N = {}
 ReferralClient.novaui = N
 
-local api           = nil     -- resolved NovaUI api table
-local resolvedName  = nil     -- where the api came from
-local reported      = false   -- only warn once
-local factoryStyle  = nil     -- "method" | "function" | nil (auto detect)
-local probing       = false   -- guards against re-entrancy while probing
-local dumped        = false   -- diagnostic printed once
+--  factory names NovaUI might publish, most likely first
+local FACTORY_KEYS = { "create", "Create", "new", "New", "component", "element",
+                       "make", "build", "add", "createComponent", "createElement" }
+
+local api          = nil      -- resolved NovaUI api table
+local resolvedName = nil      -- where the api came from
+local reported     = false    -- "not found" warning already shown
+local dumped       = false    -- diagnostic already dumped
+local probing      = false    -- re-entrancy guard while probing
+local initialised  = false    -- optional NovaUI setup hook already called
+local factory      = nil      -- { name = "create", shape = "method" }
 
 --============================================================--
 --  RESOLUTION
@@ -38,27 +47,38 @@ local function resourceRunning(name)
     return state == "running"
 end
 
+---Names a resource exports (nil when the server build has no such function).
+local function exportedNames(name)
+    local res = getResourceFromName and getResourceFromName(name)
+    if not res or type(getResourceExportedFunctions) ~= "function" then return nil end
+    local ok, list = pcall(getResourceExportedFunctions, res)
+    if not ok or type(list) ~= "table" then return nil end
+    return list
+end
+
 local function fromExports(name)
     if type(exports) ~= "table" then return nil end
     local ok, exp = pcall(function() return exports[name] end)
     if not ok or type(exp) ~= "table" then return nil end
-    --  an unknown resource also returns an (empty) table, so the
-    --  presence of a factory is what proves we found the library
-    if type(exp.create) ~= "function" then return nil end
-    return exp
-end
-
-local function fromGlobal()
-    if type(NovaUI) == "table" and type(NovaUI.create) == "function" then
-        return NovaUI
+    --  an unknown resource also yields an (empty) table, so the presence
+    --  of a factory is what proves we found a UI library
+    for _, key in ipairs(FACTORY_KEYS) do
+        if type(exp[key]) == "function" then return exp end
     end
     return nil
 end
 
----Locate NovaUI. Safe to call repeatedly (cached after the first hit).
----Order: exports of a RUNNING resource -> global table -> exports of
----any resource. The official MTA mechanism (exports of a running
----resource) wins over a possibly stale global table.
+local function fromGlobal()
+    if type(NovaUI) ~= "table" then return nil end
+    for _, key in ipairs(FACTORY_KEYS) do
+        if type(NovaUI[key]) == "function" then return NovaUI end
+    end
+    return nil
+end
+
+---Locate NovaUI. Cached after the first hit.
+---Order: exports of a RUNNING resource -> global table -> exports of any
+---resource -> any running resource whose name looks like NovaUI.
 function N.resolve(force)
     if api and not force then return api end
 
@@ -69,7 +89,7 @@ function N.resolve(force)
         if resourceRunning(name) then
             local found = fromExports(name)
             if found then
-                api, resolvedName = found, name .. " (exports)"
+                api, resolvedName, factory = found, name .. " (exports)", nil
                 Referral.log("NovaUI resolved via exports of the running resource", name)
                 return api
             end
@@ -78,7 +98,7 @@ function N.resolve(force)
 
     local found = fromGlobal()
     if found then
-        api, resolvedName = found, "global NovaUI table"
+        api, resolvedName, factory = found, "global NovaUI table", nil
         Referral.log("NovaUI resolved via a global table")
         return api
     end
@@ -86,14 +106,62 @@ function N.resolve(force)
     for _, name in ipairs(candidates) do
         found = fromExports(name)
         if found then
-            api, resolvedName = found, name .. " (exports)"
+            api, resolvedName, factory = found, name .. " (exports)", nil
             Referral.log("NovaUI resolved via exports of", name)
             return api
         end
     end
 
-    api, resolvedName = nil, nil
+    --  last resort: a running resource whose name contains "nova" and that
+    --  exports something we can build components with
+    if type(getResources) == "function" then
+        for _, res in ipairs(getResources()) do
+            local name = getResourceName(res)
+            if resourceRunning(name) and name:lower():find("nova", 1, true) then
+                found = fromExports(name)
+                if found then
+                    api, resolvedName, factory = found, name .. " (auto discovered)", nil
+                    Referral.log("NovaUI auto discovered:", name)
+                    return api
+                end
+            end
+        end
+    end
+
+    api, resolvedName, factory = nil, nil, nil
     return nil
+end
+
+---Optional one-shot setup hook.
+---Some NovaUI builds expose an init/setup function that must run before any
+---component can be created (an uninitialised build is exactly what produces
+---"attempt to perform arithmetic on field 'level'" inside the library).
+---Set ReferralConfig.novaui.initFunction = "init" to enable it - it is never
+---called automatically because the name differs between builds.
+function N.ensureInitialised()
+    if initialised then return true end
+    local ui = N.resolve()
+    if not ui then return false end
+
+    local config = ReferralConfig and ReferralConfig.novaui or {}
+    local name = config.initFunction
+    if not name or name == "" then
+        initialised = true
+        return true
+    end
+
+    local fn = ui[name]
+    if type(fn) ~= "function" then
+        Referral.warn("NovaUI has no", name, "- check ReferralConfig.novaui.initFunction")
+        initialised = true
+        return false
+    end
+
+    local ok = pcall(fn, ui)
+    if not ok then ok = pcall(fn) end
+    initialised = true
+    Referral.log("NovaUI setup hook called:", name, tostring(ok))
+    return ok
 end
 
 function N.get()
@@ -109,10 +177,10 @@ function N.isReady()
     return N.resolve() ~= nil
 end
 
----Forget the cached api (used when NovaUI restarts).
+---Forget everything (used when NovaUI restarts).
 function N.reset()
-    api, resolvedName, factoryStyle = nil, nil, nil
-    reported, dumped = false, false
+    api, resolvedName, factory = nil, nil, nil
+    reported, dumped, initialised = false, false, false
 end
 
 --============================================================--
@@ -127,83 +195,174 @@ function N.reportMissing()
     end
 end
 
----Everything needed to debug a broken NovaUI wiring, as a string.
+local function describe(value)
+    if value == nil then return "nil" end
+    local kind = type(value)
+    if kind == "table" then
+        local keys = {}
+        for key in pairs(value) do keys[#keys + 1] = tostring(key) end
+        table.sort(keys)
+        return "table {" .. table.concat(keys, ","):sub(1, 90) .. "}"
+    end
+    return kind .. " " .. tostring(value):sub(1, 60)
+end
+
+---Everything needed to debug a broken NovaUI wiring, as one string.
 function N.diagnose()
     local lines = {}
-    lines[#lines + 1] = "novaUI resolved: " .. tostring(N.resolve() ~= nil)
-    lines[#lines + 1] = "novaUI source: " .. tostring(resolvedName or "none")
-    lines[#lines + 1] = "factory style: " .. tostring(factoryStyle or "auto")
+    local ui = N.resolve()
+
+    lines[#lines + 1] = "novaUI resolved : " .. tostring(ui ~= nil)
+    lines[#lines + 1] = "novaUI source   : " .. tostring(resolvedName or "none")
+    lines[#lines + 1] = "factory in use  : "
+        .. (factory and (tostring(factory.name) .. " / " .. tostring(factory.shape)) or "not resolved yet")
+    lines[#lines + 1] = "initFunction    : "
+        .. tostring(ReferralConfig.novaui.initFunction or "not set (no setup hook called)")
+
     lines[#lines + 1] = "candidates:"
-    for _, name in ipairs(ReferralConfig.novaui.resourceNames) do
+    local candidates = (ReferralConfig and ReferralConfig.novaui
+        and ReferralConfig.novaui.resourceNames) or { "NovaUI" }
+    for _, name in ipairs(candidates) do
         local res = getResourceFromName and getResourceFromName(name)
-        lines[#lines + 1] = string.format("   %-12s resource=%s state=%s exports=%s",
-            name, tostring(res ~= nil),
-            tostring(res and getResourceState(res) or "-"),
-            tostring(type(exports) == "table" and type(exports[name]) == "table"
-                and type(exports[name].create) == "function" or false))
-    end
-    lines[#lines + 1] = "global NovaUI: " .. tostring(type(NovaUI))
-    if type(NovaUI) == "table" then
-        lines[#lines + 1] = "global NovaUI.create: " .. tostring(type(NovaUI.create))
+        local state = res and getResourceState(res) or "-"
+        local names = exportedNames(name)
+        lines[#lines + 1] = string.format("   %-12s exists=%-5s state=%-9s exports=%s",
+            name, tostring(res ~= nil), tostring(state),
+            names and ("[" .. table.concat(names, " "):sub(1, 120) .. "]") or "n/a")
     end
 
-    --  try a real creation and report the exact error
-    local ui = N.resolve()
-    if ui and type(ui.create) == "function" and not probing then
+    lines[#lines + 1] = "global NovaUI   : " .. type(NovaUI)
+    if type(NovaUI) == "table" then
+        local keys = {}
+        for key, value in pairs(NovaUI) do
+            keys[#keys + 1] = tostring(key) .. "=" .. type(value)
+        end
+        table.sort(keys)
+        lines[#lines + 1] = "global keys     : {" .. table.concat(keys, ", "):sub(1, 160) .. "}"
+    end
+
+    --  live probe: show what every shape actually RETURNS for the component
+    --  kinds this resource needs, not just whether it raised an error
+    if ui and not probing then
         probing = true
-        local okMethod, errMethod = pcall(ui.create, ui, "label", { text = "probe", x = 0, y = 0 })
-        local okFunc, errFunc = pcall(ui.create, "label", { text = "probe", x = 0, y = 0 })
+        lines[#lines + 1] = "probe results (what create returns):"
+        for _, key in ipairs(FACTORY_KEYS) do
+            local fn = ui[key]
+            if type(fn) == "function" then
+                for _, kind in ipairs({ "window", "panel", "label" }) do
+                    local attempts = {
+                        { label = string.format("%s:create(%q, props)", key, kind), run = function()
+                            return fn(ui, kind, { x = 0, y = 0, width = 10, height = 10, text = "probe" })
+                        end },
+                        { label = string.format("%s.create(%q, props)", key, kind), run = function()
+                            return fn(kind, { x = 0, y = 0, width = 10, height = 10, text = "probe" })
+                        end },
+                        { label = string.format("%s:create(props type=%q)", key, kind), run = function()
+                            return fn(ui, { type = kind, x = 0, y = 0, width = 10, height = 10, text = "probe" })
+                        end },
+                    }
+                    for _, attempt in ipairs(attempts) do
+                        local ok, result = pcall(attempt.run)
+                        lines[#lines + 1] = string.format("   %-34s -> %s%s",
+                            attempt.label, ok and "ok " or "ERROR ",
+                            ok and describe(result) or tostring(result):sub(1, 90))
+                        if ok and type(result) == "table" and type(result.destroy) == "function" then
+                            pcall(result.destroy, result)
+                        end
+                    end
+                end
+            end
+        end
         probing = false
-        lines[#lines + 1] = "method style NovaUI:create(ui, kind, props) -> "
-            .. tostring(okMethod) .. (okMethod and "" or (" / " .. tostring(errMethod)))
-        lines[#lines + 1] = "function style NovaUI.create(kind, props) -> "
-            .. tostring(okFunc) .. (okFunc and "" or (" / " .. tostring(errFunc)))
     end
     return table.concat(lines, "\n")
 end
 
 --============================================================--
---  FACTORY CALLS (both calling conventions)
+--  FACTORY DISCOVERY
 --============================================================--
----Call a factory, trying method style first then function style.
----@return any element or nil, string error
-local function callFactory(fn, self, kind, props, label)
-    if factoryStyle == "method" then
-        local ok, result = pcall(fn, self, kind, props)
-        if ok and result ~= nil then return result end
-        if ok then return nil, "nil element" end
-        return nil, tostring(result)
+local function isUsable(value)
+    if value == nil or value == false then return false end
+    local kind = type(value)
+    return kind == "table" or kind == "userdata"
+end
+
+---Try every plausible calling shape until one returns a component.
+---@return any element, string error
+local function callFactory(owner, kind, props)
+    local keys = {}
+    if factory and factory.name then
+        keys[1] = factory.name
+    else
+        for _, key in ipairs(FACTORY_KEYS) do keys[#keys + 1] = key end
     end
 
-    if factoryStyle == "function" then
-        local ok, result = pcall(fn, kind, props)
-        if ok and result ~= nil then return result end
-        if ok then return nil, "nil element" end
-        return nil, tostring(result)
+    local shapes = {
+        { name = "method(kind, props)", run = function(fn)
+            return fn(owner, kind, props)
+        end },
+        { name = "function(kind, props)", run = function(fn)
+            return fn(kind, props)
+        end },
+        { name = "method(props)", run = function(fn)
+            local merged = {}
+            for key, value in pairs(props) do merged[key] = value end
+            merged.type, merged.component = kind, kind
+            return fn(owner, merged)
+        end },
+        { name = "function(props)", run = function(fn)
+            local merged = {}
+            for key, value in pairs(props) do merged[key] = value end
+            merged.type, merged.component = kind, kind
+            return fn(merged)
+        end },
+        { name = "method(kind)", run = function(fn)
+            return fn(owner, kind)
+        end },
+        { name = "function(kind)", run = function(fn)
+            return fn(kind)
+        end },
+    }
+
+    local firstError
+
+    --  fast path: a working convention is already known
+    if factory and factory.name and factory.shape then
+        local fn = owner[factory.name]
+        if type(fn) == "function" then
+            for _, shape in ipairs(shapes) do
+                if shape.name == factory.shape then
+                    local ok, result = pcall(shape.run, fn)
+                    if ok and isUsable(result) then return result end
+                    if not ok and not firstError then
+                        firstError = tostring(result):sub(1, 120)
+                    end
+                    break
+                end
+            end
+        end
+        --  the known convention stopped working: fall through and re-probe
+        factory = nil
     end
 
-    --  auto detect: method style (self first) is what NovaUI v3 uses
-    local okMethod, resultMethod, errMethod = pcall(fn, self, kind, props)
-    if okMethod and resultMethod ~= nil then
-        factoryStyle = "method"
-        Referral.log(label, "uses method style (NovaUI:create)")
-        return resultMethod
+    --  probe every key/shape pair until one hands back a component
+    for _, key in ipairs(keys) do
+        local fn = owner[key]
+        if type(fn) == "function" then
+            for _, shape in ipairs(shapes) do
+                local ok, result = pcall(shape.run, fn)
+                if ok and isUsable(result) then
+                    factory = { name = key, shape = shape.name }
+                    Referral.log("NovaUI factory resolved:", key, shape.name)
+                    return result
+                end
+                if not ok and not firstError then
+                    firstError = tostring(result):sub(1, 120)
+                end
+            end
+        end
     end
-    if okMethod and resultMethod == nil then
-        errMethod = "nil element"
-    end
-
-    local okFunc, resultFunc, errFunc = pcall(fn, kind, props)
-    if okFunc and resultFunc ~= nil then
-        factoryStyle = "function"
-        Referral.log(label, "uses function style (NovaUI.create)")
-        return resultFunc
-    end
-    if okFunc and resultFunc == nil then
-        errFunc = "nil element"
-    end
-
-    return nil, tostring(errFunc or errMethod)
+    return nil, firstError or "every calling convention returned nil"
 end
 
 --============================================================--
@@ -226,7 +385,6 @@ function N.call(element, method, ...)
 end
 
 ---Call a NovaUI helper (notify, animate, setFont, ...).
----Helpers are tried method style first, then as plain functions.
 function N.invoke(helper, ...)
     local ui = N.resolve()
     if not ui then N.reportMissing() return false, nil end
@@ -252,13 +410,9 @@ function N.create(kind, props)
     props = props or {}
     local ui = N.resolve()
     if not ui then N.reportMissing() return nil end
-    if type(ui.create) ~= "function" then
-        Referral.warn("NovaUI has no create() factory - wrong resource?")
-        N.reportMissing()
-        return nil
-    end
+    N.ensureInitialised()
 
-    local element, err = callFactory(ui.create, ui, kind, props, "NovaUI")
+    local element, err = callFactory(ui, kind, props)
     if not element then
         Referral.warn("NovaUI could not create", kind, "->", tostring(err))
         --  dump the wiring once so the exact reason is visible in the console
@@ -275,11 +429,9 @@ end
 function N.child(parent, kind, props)
     if not parent then return nil end
     props = props or {}
-    if type(parent.create) ~= "function" then
-        Referral.log("parent cannot create", kind)
-        return nil
-    end
-    local element, err = callFactory(parent.create, parent, kind, props, "element")
+    if type(parent) ~= "table" and type(parent) ~= "userdata" then return nil end
+
+    local element, err = callFactory(parent, kind, props)
     if not element then
         Referral.log("parent could not create", kind, "->", tostring(err))
         return nil
